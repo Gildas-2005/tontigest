@@ -218,7 +218,7 @@ export function MembresPage() {
 
   const add = () => {
     if (!form.nom || !form.tel) return toast('Nom et téléphone obligatoires', 'error')
-    const m = { id: uid('m'), ...form, role: 'Membre', statut: 'En attente', motDePasse: 'demo1234', twoFA: false, dateAdhesion: today(), photo: null }
+    const m = { id: uid('m'), ...form, role: 'Membre', statut: 'En attente', twoFA: false, dateAdhesion: today(), photo: null }
     setDb(d => ({ ...d, membres: [...d.membres, m], ordrePassage: [...d.ordrePassage, m.id], notifications: [...d.notifications, { id: uid('nt'), pour: m.id, titre: 'Bienvenue au club 🎉', message: `Votre compte ${d.tontine.nom} a été créé. Il sera actif après validation du bureau.`, lu: false, date: now() }] }))
     setOpen(false); setForm({ nom: '', tel: '', email: '', profession: '' })
     toast(`Membre « ${form.nom} » enregistré (statut : en attente d'activation)`)
@@ -226,7 +226,7 @@ export function MembresPage() {
   const importBulk = () => {
     const lignes = bulk.split('\n').map(l => l.trim()).filter(Boolean).map(l => { const [nom, tel] = l.split(/[;,\t]/); return { nom: nom?.trim(), tel: tel?.trim() } }).filter(x => x.nom && x.tel)
     if (!lignes.length) return toast('Format attendu : une ligne par membre — « Nom ; Téléphone »', 'error')
-    const nouveaux = lignes.map(x => ({ id: uid('m'), nom: x.nom, tel: x.tel, email: '', profession: '', role: 'Membre', statut: 'En attente', motDePasse: 'demo1234', twoFA: false, dateAdhesion: today(), photo: null }))
+    const nouveaux = lignes.map(x => ({ id: uid('m'), nom: x.nom, tel: x.tel, email: '', profession: '', role: 'Membre', statut: 'En attente', twoFA: false, dateAdhesion: today(), photo: null }))
     setDb(d => ({ ...d, membres: [...d.membres, ...nouveaux], ordrePassage: [...d.ordrePassage, ...nouveaux.map(n => n.id)] }))
     setImportOpen(false); setBulk(''); toast(`${nouveaux.length} membre(s) importé(s)`)
   }

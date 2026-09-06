@@ -6,7 +6,7 @@ import { Avatar, Badge } from './ui'
 function Brand({ compact }) {
   return (
     <div className="flex items-center gap-2.5">
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-gold-300 to-gold-500 font-display text-lg font-bold text-brand-950 shadow-lg shadow-gold-500/30">T</span>
+      <img src="/logo.svg" alt="TontiGest" className="h-10 w-10 shrink-0 drop-shadow-lg" />
       {!compact && (
         <div className="leading-tight">
           <p className="font-display text-lg font-bold text-white">Tonti<span className="gold-text">Gest</span></p>
@@ -57,7 +57,8 @@ function NotifBell() {
 }
 
 export function Shell({ nav, page, setPage, children }) {
-  const { user, logout } = useAuth()
+  const { db } = useStore()
+  const { user, signOut } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [userOpen, setUserOpen] = useState(false)
   const current = nav.find(n => n.id === page)
@@ -79,7 +80,7 @@ export function Shell({ nav, page, setPage, children }) {
         ))}
       </nav>
       <div className="border-t border-white/10 p-4">
-        <button onClick={logout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-brand-100/70 transition hover:bg-red-500/15 hover:text-red-200 cursor-pointer">
+        <button onClick={signOut} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-brand-100/70 transition hover:bg-red-500/15 hover:text-red-200 cursor-pointer">
           <span className="grid h-8 w-8 place-items-center rounded-lg bg-white/5">⏻</span> Déconnexion
         </button>
       </div>
@@ -107,7 +108,7 @@ export function Shell({ nav, page, setPage, children }) {
               <p className="truncate text-[11px] font-bold uppercase tracking-wider text-ink/40">{current?.group || 'Tableau de bord'}</p>
               <h2 className="truncate font-display text-lg font-semibold leading-tight">{current?.label || 'Accueil'}</h2>
             </div>
-            <Badge tone="green" dot>{'Tontine active'}</Badge>
+            <Badge tone={db.tontine?.statut === 'Active' ? 'green' : 'amber'} dot>{db.tontine?.statut === 'Active' ? 'Tontine active' : db.tontine?.statut || 'Tontine'}</Badge>
             <NotifBell />
             <div className="relative">
               <button onClick={() => setUserOpen(o => !o)} className="flex items-center gap-2.5 rounded-xl border border-black/5 bg-white py-1.5 pl-1.5 pr-3 shadow-sm transition hover:-translate-y-0.5 cursor-pointer">
@@ -122,7 +123,7 @@ export function Shell({ nav, page, setPage, children }) {
                   <div className="fixed inset-0 z-40" onClick={() => setUserOpen(false)} />
                   <div className="absolute right-0 z-50 mt-2 w-56 animate-scale-in overflow-hidden rounded-2xl border border-black/5 bg-white py-1.5 shadow-2xl">
                     <button onClick={() => { setUserOpen(false); go('profil') }} className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-semibold transition hover:bg-brand-50 cursor-pointer">👤 Mon profil</button>
-                    <button onClick={logout} className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50 cursor-pointer">⏻ Déconnexion</button>
+                    <button onClick={signOut} className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50 cursor-pointer">⏻ Déconnexion</button>
                   </div>
                 </>
               )}

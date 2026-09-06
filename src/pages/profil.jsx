@@ -1,33 +1,41 @@
 import { useState } from 'react'
 import { useStore, useAuth, BUREAU_LABELS } from '../lib/store'
+import { supabase } from '../lib/supabase'
 import { PageHeader, Card, Button, Input, Field, Avatar, Badge, Modal } from '../components/ui'
 import { fmtDate } from '../lib/utils'
 
 export function ProfilPage() {
-  const { db, setDb, toast } = useStore()
+  const { db, toast } = useStore()
   const { user, updateMe } = useAuth()
-  const me = db.membres.find(m => m.id === user.id)
+  const me = db.membres.find(m => m.id === user.id) || { nom: user.nom || '', role: user.role || 'Membre', tel: '', email: user.email || '', statut: 'Actif', dateAdhesion: '', twoFA: !!user.twoFA, photo: null }
   const [form, setForm] = useState({ nom: me.nom, tel: me.tel, email: me.email, profession: me.profession })
   const [pw, setPw] = useState({ old: '', n1: '', n2: '' })
   const [pwOpen, setPwOpen] = useState(false)
   const [codeOpen, setCodeOpen] = useState(false)
   const [code, setCode] = useState('')
+  const [smsCode, setSmsCode] = useState('')
 
-  const saveProfile = () => { updateMe(form); toast('Profil mis à jour avec succès') }
-  const changePwd = () => {
-    if (pw.old !== me.motDePasse) return toast('Ancien mot de passe incorrect', 'error')
+  const saveProfile = async () => { await updateMe(form); toast('Profil mis à jour avec succès') }
+  const changePwd = async () => {
     if (pw.n1.length < 8) return toast('Le nouveau mot de passe doit faire 8 caractères minimum', 'error')
     if (pw.n1 !== pw.n2) return toast('Les mots de passe ne correspondent pas', 'error')
-    setDb(d => ({ ...d, membres: d.membres.map(m => m.id === me.id ? { ...m, motDePasse: pw.n1 } : m) }))
+    // Revérifie l'ancien mot de passe avant modification
+    const { error: errOld } = await supabase.auth.signInWithPassword({ email: user.email, password: pw.old })
+    if (errOld) return toast('Ancien mot de passe incorrect', 'error')
+    const { error } = await supabase.auth.updateUser({ password: pw.n1 })
+    if (error) return toast('Modification impossible : ' + error.message, 'error')
     setPwOpen(false); setPw({ old: '', n1: '', n2: '' }); toast('Mot de passe modifié — sécurisé 🔒')
   }
-  const toggle2FA = () => {
-    if (me.twoFA) { updateMe({ twoFA: false }); toast('2FA désactivée', 'info') }
-    else { setCodeOpen(true); setCode('') }
+  const toggle2FA = async () => {
+    if (me.twoFA) { await updateMe({ twoFA: false }); toast('2FA désactivée', 'info') }
+    else {
+      const c = String(Math.floor(100000 + Math.random() * 900000))
+      setSmsCode(c); setCode(''); setCodeOpen(true)
+    }
   }
-  const confirm2FA = () => {
-    if (code !== '123456') return toast('Code invalide — code démo : 123456', 'error')
-    updateMe({ twoFA: true }); setCodeOpen(false); toast('2FA activée par SMS 📱')
+  const confirm2FA = async () => {
+    if (code !== smsCode) return toast('Code invalide — vérifiez le code affiché', 'error')
+    await updateMe({ twoFA: true }); setCodeOpen(false); toast('2FA activée par SMS 📱')
   }
 
   return (
@@ -93,9 +101,10 @@ export function ProfilPage() {
       </Modal>
 
       <Modal open={codeOpen} onClose={() => setCodeOpen(false)} title="Activation 2FA — vérification SMS"
-        subtitle={`Un code à 6 chiffres a été envoyé au ${me.tel} (démo : 123456)`}
+        subtitle={`Un code à 6 chiffres a été envoyé au ${me.tel || 'numéro du compte'}${me.tel ? '' : ' (passerelle SMS non connectée — code de test ci-dessous)'}`}
         footer={<><Button variant="ghost" onClick={() => setCodeOpen(false)}>Annuler</Button><Button onClick={confirm2FA}>Confirmer</Button></>}>
         <Input value={code} onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="—— —— ——" className="text-center text-2xl font-bold tracking-[.5em]" autoFocus />
+        {smsCode && <p className="mt-3 rounded-xl bg-gold-50 px-4 py-2.5 text-center text-xs font-semibold text-gold-800 ring-1 ring-inset ring-gold-200">Passerelle SMS non connectée — code de vérification : <b className="tracking-widest">{smsCode}</b></p>}
       </Modal>
     </div>
   )

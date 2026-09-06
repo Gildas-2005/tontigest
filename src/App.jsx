@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { StoreProvider, useAuth } from './lib/store'
+import { StoreProvider, useAuth, useStore } from './lib/store'
 import { Shell } from './components/layout'
-import AuthPage from './pages/auth'
+import AuthPage, { Splash, ClubSetup, Onboarding } from './pages/auth'
 import { ProfilPage } from './pages/profil'
 import { PresidentHome, TontinePage, OrdrePage, MembresPage, BureauPage, SanctionsPage, RapportsPage, AlertesPage, DiffusionPage } from './pages/president'
 import { TresorierHome, CotisationsPage, CaissePage, BanqueOpsPage, PenalitesPage, EpargnePage, PretsPage, InteretsPage, AidesPage, EncheresPage, RapportsFinPage } from './pages/tresorier'
@@ -106,13 +106,23 @@ const NAV = {
   ],
 }
 
-const flatten = (nav) => nav.flatMap(g => g.items.map(({ id, label, icon, group }) => ({ id, label, icon, group })))
+const flatten = (nav) => nav.flatMap(g => g.items.map(({ id, label, icon, group, el }) => ({ id, label, icon, group, el })))
 
 function AppInner() {
-  const { user } = useAuth()
+  const { user, authReady } = useAuth()
+  const { db } = useStore()
   const [route, go] = useRoute()
+  const [splash, setSplash] = useState(true)
+  useEffect(() => {
+    const t = setTimeout(() => setSplash(false), 2000)
+    return () => clearTimeout(t)
+  }, [])
 
+  if (splash || !authReady) return <Splash />
   if (!user) return <AuthPage />
+  if (!user.clubId) return <ClubSetup />
+  if (!user.onboardingDone) return <Onboarding />
+  if (!db.tontine) return <Splash />
 
   const pages = flatten(NAV[user.role] || NAV.Membre)
   const current = pages.find(p => p.id === route) || pages[0]

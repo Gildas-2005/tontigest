@@ -1,169 +1,101 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef } from 'react'
+import { supabase } from './supabase'
 import { uid, today } from './utils'
 
-/* ----------------------------- Seed data ----------------------------- */
+/* ----------------------- Table mapping ----------------------- */
 
-const MEMBRES = [
-  ['Émile Ndongo', 'President', '+237 6 99 12 34 56', 'emile.ndongo@mail.cm'],
-  ['Marie-Claire Abena', 'Tresorier', '+237 6 77 45 89 10', 'mc.abena@mail.cm'],
-  ['Jean-Bosco Etoundi', 'Secretaire', '+237 6 55 23 78 44', 'jb.etoundi@mail.cm'],
-  ['Solange Mballa', 'Commissaire', '+237 6 91 08 65 22', 's.mballa@mail.cm'],
-  ['Paulin Nkoulou', 'Membre', '+237 6 78 34 12 90', 'p.nkoulou@mail.cm'],
-  ['Aurélie Ngo Bassa', 'Membre', '+237 6 70 56 43 21', 'a.ngobassa@mail.cm'],
-  ['Serge Ewane', 'Membre', '+237 6 99 87 65 43', 's.ewane@mail.cm'],
-  ['Chantal Mogho', 'Membre', '+237 6 55 11 22 33', 'c.mogho@mail.cm'],
-  ['Désiré Kamdem', 'Membre', '+237 6 77 88 99 00', 'd.kamdem@mail.cm'],
-  ['Nadia Fotso', 'Membre', '+237 6 90 12 45 78', 'n.fotso@mail.cm'],
-  ['Blaise Tchoumi', 'Membre', '+237 6 62 33 44 55', 'b.tchoumi@mail.cm'],
-  ['Rosine Ekani', 'Membre', '+237 6 61 77 88 99', 'r.ekani@mail.cm'],
-]
+const TABLES = {
+  membres: 'members',
+  cotisations: 'cotisations',
+  mouvements: 'mouvements',
+  penalites: 'penalites',
+  epargneIndividuelle: 'epargne',
+  groupesEpargne: 'groupes_epargne',
+  prets: 'prets',
+  interetsRedistribues: 'redistributions',
+  aides: 'aides',
+  encheres: 'encheres',
+  seances: 'seances',
+  parrainages: 'parrainages',
+  reclamations: 'reclamations',
+  sanctions: 'sanctions',
+  rapports: 'rapports',
+  alertes: 'alertes',
+  notifsMasse: 'annonces',
+  audits: 'audits',
+  notifications: 'notifications',
+}
 
-const STATUTS = ['Actif', 'Actif', 'Actif', 'Actif', 'Actif', 'Actif', 'Actif', 'Suspendu', 'Actif', 'Actif', 'Actif', 'Actif']
+const emptyDb = () => {
+  const db = { tontine: null }
+  for (const k of Object.keys(TABLES)) db[k] = []
+  return db
+}
 
-function seed() {
-  const membres = MEMBRES.map(([nom, role, tel, email], i) => ({
-    id: `m${i + 1}`, nom, role, tel, email,
-    motDePasse: 'demo1234',
-    twoFA: role === 'President',
-    statut: STATUTS[i],
-    profession: ['Commerçant', 'Infirmière', 'Enseignant', 'Comptable', 'Chauffeur', 'Couturière', 'Informaticien', 'Coiffeuse', 'Agriculteur', 'Boutiquière', 'Maçon', 'Restauratrice'][i],
-    dateAdhesion: `2025-0${(i % 6) + 1}-1${i % 9}`,
-    photo: null,
-  }))
-  const ids = membres.map(m => m.id)
-  const cot = 25000
+/* ----------------------- Clubs <-> rows ----------------------- */
 
-  // Ordre de passage (le président en dernier, rotatif)
-  const ordrePassage = [...ids.slice(4), ...ids.slice(0, 4)]
-
-  const cotisations = []
-  const methodes = ['Espèces', 'Orange Money', 'MTN MoMo', 'Carte']
-  ids.forEach((mid, i) => {
-    const nPaiements = 4 + (i % 4)
-    for (let k = 0; k < nPaiements; k++) {
-      const d = new Date(2026, k + 1, 3 + i)
-      cotisations.push({
-        id: uid('cot'), membreId: mid, montant: cot, devise: 'XAF',
-        date: d.toISOString().slice(0, 10), periode: `2026-0${k + 1}`,
-        methode: methodes[(i + k) % 4], ref: `TG${2600 + i * 10 + k}`,
-        statut: k === nPaiements - 1 && i % 4 === 0 ? 'En attente' : 'Validée',
-      })
-    }
-  })
-
-  const decaisses = ordrePassage.slice(0, 3).map((mid, i) => ({
-    id: uid('mv'), type: 'Decaissement', sens: 'out', compte: 'Caisse',
-    montant: 300000, devise: 'XAF', date: `2026-0${i + 1}-05`,
-    note: `Tour de ${membres.find(m => m.id === mid).nom}`, membreId: mid,
-  }))
-
-  const mouvements = [
-    ...cotisations.filter(c => c.statut === 'Validée').map(c => ({
-      id: uid('mv'), type: 'Cotisation', sens: 'in',
-      compte: c.methode === 'Espèces' ? 'Caisse' : c.methode === 'Orange Money' ? 'OM' : c.methode === 'MTN MoMo' ? 'MoMo' : 'Banque',
-      montant: c.montant, devise: 'XAF', date: c.date, note: `Cotisation ${c.periode}`, membreId: c.membreId,
-    })),
-    ...decaisses,
-    { id: uid('mv'), type: 'Versement banque', sens: 'out', compte: 'Caisse', montant: 1500000, devise: 'XAF', date: '2026-02-20', note: 'Dépôt BICEC — sécurité de la caisse' },
-    { id: uid('mv'), type: 'Pret', sens: 'out', compte: 'Caisse', montant: 200000, devise: 'XAF', date: '2026-03-12', note: 'Prêt interne accordé', membreId: 'm9' },
-  ]
-
-  const penalites = [
-    { id: uid('pen'), membreId: 'm8', montant: 2500, motif: 'Retard de cotisation (Juillet)', date: '2026-07-11', payee: false },
-    { id: uid('pen'), membreId: 'm5', montant: 2500, motif: 'Absence non justifiée à la séance', date: '2026-06-14', payee: true },
-    { id: uid('pen'), membreId: 'm11', montant: 2500, motif: 'Retard de cotisation (Août)', date: '2026-08-12', payee: false },
-  ]
-
-  const epargneIndividuelle = ids.map((mid, i) => ({
-    membreId: mid, solde: [180000, 240000, 95000, 120000, 60000, 145000, 30000, 0, 110000, 88000, 42000, 130000][i],
-    bloquee: [120000, 180000, 60000, 90000, 40000, 100000, 20000, 0, 80000, 60000, 30000, 90000][i],
-    type: i % 3 === 0 ? 'Bloquée' : 'Volontaire',
-    versements: [{ id: uid('v'), montant: 25000, date: '2026-07-02' }, { id: uid('v'), montant: 25000, date: '2026-08-03' }],
-  }))
-
-  const groupesEpargne = [
-    { id: uid('gr'), nom: 'Groupe Femmes Debout', membres: ['m2', 'm6', 'm8', 'm10', 'm12'], solde: 620000, objectif: 1000000 },
-    { id: uid('gr'), nom: 'Groupe Jeunes Bâtisseurs', membres: ['m5', 'm7', 'm9', 'm11'], solde: 380000, objectif: 800000 },
-  ]
-
-  const prets = [
-    { id: uid('pr'), membreId: 'm9', montant: 200000, taux: 10, garants: ['m5', 'm7'], statut: 'En cours', dateDemande: '2026-03-01', motif: 'Réapprovisionnement boutique', reste: 140000, interet: 20000 },
-    { id: uid('pr'), membreId: 'm6', montant: 150000, taux: 10, garants: ['m2', 'm10'], statut: 'Remboursé', dateDemande: '2025-11-15', motif: 'Frais de scolarité', reste: 0, interet: 15000 },
-    { id: uid('pr'), membreId: 'm11', montant: 100000, taux: 10, garants: ['m7', 'm12'], statut: 'En attente', dateDemande: today(), motif: 'Soins familiaux', reste: 100000, interet: 10000 },
-  ]
-
-  const interetsRedistribues = [
-    { id: uid('ir'), total: 15000, date: '2026-01-31', parts: ids.map(mid => ({ membreId: mid, montant: 1250 })) },
-    { id: uid('ir'), total: 15000, date: '2026-02-28', parts: ids.map(mid => ({ membreId: mid, montant: 1250 })) },
-  ]
-
-  const aides = [
-    { id: uid('ai'), membreId: 'm8', type: 'Naissance', montant: 100000, statut: 'Payée', date: '2026-05-20', motif: 'Naissance de jumeaux' },
-    { id: uid('ai'), membreId: 'm12', type: 'Mariage', montant: 150000, statut: 'Validée', date: today(), motif: 'Mariage prévu le 26/09' },
-    { id: uid('ai'), membreId: 'm5', type: 'Maladie', montant: 75000, statut: 'En attente', date: today(), motif: 'Hospitalisation urgent' },
-  ]
-
-  const encheres = [
-    { id: uid('en'), membreId: ordrePassage[3], date: today(), statut: 'Ouverte', offres: [{ membreId: 'm9', montant: 315000 }, { membreId: 'm10', montant: 308000 }], gagnantId: null },
-    { id: uid('en'), membreId: ordrePassage[1], date: '2026-04-02', statut: 'Clôturée', offres: [{ membreId: 'm6', montant: 312000 }], gagnantId: 'm6' },
-  ]
-
-  const seances = [
-    { id: uid('se'), titre: 'Séance mensuelle d\'Août', date: '2026-08-30', lieu: 'Chez la Présidente — Odza', statut: 'Terminée', pv: 'Ordre du jour : lecture du rapport du trésorier, tour de M. Kamdem, divers. Le PV est adopté à l\'unanimité.', presences: Object.fromEntries(ids.map((id, i) => [id, i !== 7])) },
-    { id: uid('se'), titre: 'Séance mensuelle de Septembre', date: '2026-09-27', lieu: 'Salle paroissielle St-Paul', statut: 'Planifiée', pv: null, presences: {} },
-  ]
-
-  const parrainages = ids.slice(4, 8).map((mid, i) => ({ id: uid('pa'), membreId: mid, parrainId: ids[i], date: `2025-0${i + 2}-10` }))
-
-  const reclamations = [
-    { id: uid('re'), membreId: 'm8', sujet: 'Erreur sur mon solde d\'épargne', detail: 'Le solde affiché ne correspond pas à mes versements d\'août.', statut: 'En cours', reponse: '', date: '2026-08-21' },
-    { id: uid('re'), membreId: 'm11', sujet: 'Retard de décaissement du tour', detail: 'Mon tour était prévu le 2 et je n\'ai rien reçu.', statut: 'Ouverte', reponse: '', date: today() },
-  ]
-
-  const sanctions = [
-    { id: uid('sa'), membreId: 'm8', type: 'Avertissement', motif: '3 retards consécutifs', date: '2026-07-30' },
-    { id: uid('sa'), membreId: 'm7', type: 'Amende', motif: 'Perturbation de la séance', date: '2026-06-30' },
-  ]
-
-  const rapports = [
-    { id: uid('ra'), periode: 'Août 2026', type: 'Financier', statut: 'Soumis', auteur: 'Marie-Claire Abena', date: '2026-08-31', resume: 'Encaissements 300 000 XAF, décaissements 300 000 XAF (tour), caisse saine. Aucun écart de rapprochement.' },
-  ]
-
-  const alertes = [
-    { id: uid('al'), de: 'Solange Mballa', type: 'Anomalie', message: 'Le bordereau de dépôt du 20/02 n\'a pas de scan de reçu joint.', statut: 'Nouvelle', date: '2026-08-28' },
-  ]
-
-  const notifsMasse = [
-    { id: uid('nm'), message: 'Rappel : la séance de septembre aura lieu le 27/09 à la salle paroissielle St-Paul.', canal: 'WhatsApp', date: '2026-09-01', cible: 'Tous les membres' },
-  ]
-
-  const audits = [
-    { id: uid('au'), cible: 'Mouvement TG-2600 (Cotisation Août)', verdict: 'Conforme', note: 'Reçu joint et validé.', date: '2026-08-30', par: 'Solange Mballa' },
-    { id: uid('au'), cible: 'Décaissement tour Février', verdict: 'Anomalie', note: 'Signature du bénéficiaire manquante sur le procès-verbal.', date: '2026-08-30', par: 'Solange Mballa' },
-  ]
-
-  const caisse = { XAF: { Caisse: 1250000, Banque: 4380000, OM: 340000, MoMo: 515000 }, EUR: { Caisse: 50000, Banque: 0 } }
-
-  const notifications = ids.slice(0, 8).flatMap((mid, i) => ([
-    { id: uid('nt'), pour: mid, titre: 'Cotisation reçue', message: 'Votre cotisation d\'août a été validée par le trésorier.', lu: i > 3, date: '2026-08-04T10:12:00' },
-    { id: uid('nt'), pour: mid, titre: 'Rappel de séance', message: 'Prochaine séance le 27/09 — salle paroissielle St-Paul.', lu: false, date: '2026-09-01T08:00:00' },
-  ]))
-
+function clubFromRow(row) {
   return {
-    version: 7,
-    tontine: {
-      nom: 'Club Solidarité', ville: 'Yaoundé — Cameroun',
-      type: 'Rotative', montantCotisation: cot, frequence: 'Mensuelle',
-      penaliteRetard: 2500, tauxPret: 10, tauxEnchereMin: 300000,
-      statut: 'Active', dateDebut: '2026-01-05', banque: 'BICEC — RIB : 10005 00012 3405678901 — 76',
-    },
-    membres, ordrePassage, cotisations, mouvements, caisse, penalites,
-    epargneIndividuelle, groupesEpargne, prets, interetsRedistribues,
-    aides, encheres, seances, parrainages, reclamations, sanctions,
-    rapports, alertes, notifsMasse, audits, notifications,
+    id: row.id,
+    code: row.code,
+    nom: row.nom || 'Ma tontine',
+    ville: row.ville || '',
+    type: row.type || 'Rotative',
+    devise: row.devise || 'XAF',
+    montantCotisation: Number(row.montant_cotisation) || 0,
+    statut: row.statut || 'Active',
+    ...(row.payload || {}),
   }
 }
+
+function clubToRow(t) {
+  const payload = { ...t }
+  const row = {
+    nom: payload.nom || 'Ma tontine',
+    ville: payload.ville || '',
+    type: payload.type || 'Rotative',
+    devise: payload.devise || 'XAF',
+    montant_cotisation: Number(payload.montantCotisation) || 0,
+    statut: payload.statut || 'Active',
+  }
+  delete payload.nom
+  delete payload.ville
+  delete payload.type
+  delete payload.devise
+  delete payload.montantCotisation
+  delete payload.statut
+  delete payload.id
+  delete payload.code
+  row.payload = payload
+  return row
+}
+
+const sanitize = (obj) => {
+  const rest = { ...obj }
+  delete rest._user_id
+  return rest
+}
+
+function diffRows(prev = [], next = []) {
+  const prevMap = new Map(prev.map(r => [r.id, r]))
+  const nextMap = new Map(next.map(r => [r.id, r]))
+  const upserts = []
+  const deletes = []
+  for (const [id, row] of nextMap) {
+    if (!prevMap.has(id) || JSON.stringify(sanitize(prevMap.get(id))) !== JSON.stringify(sanitize(row))) upserts.push(row)
+  }
+  for (const id of prevMap.keys()) if (!nextMap.has(id)) deletes.push(id)
+  return { upserts, deletes }
+}
+
+const AUTH_ERRORS = {
+  'Invalid login credentials': 'Email ou mot de passe incorrect.',
+  'Email not confirmed': 'Email non confirmé — vérifiez votre boîte de réception.',
+  'User already registered': 'Un compte existe déjà avec cet email.',
+  'Password should be at least 6 characters': 'Le mot de passe doit contenir au moins 6 caractères.',
+}
+const traduire = (e) => AUTH_ERRORS[e?.message] || e?.message || 'Une erreur est survenue.'
 
 /* ----------------------------- Contexts ----------------------------- */
 
@@ -171,49 +103,304 @@ const StoreCtx = createContext(null)
 const AuthCtx = createContext(null)
 const ToastCtx = createContext(null)
 
-const DB_KEY = 'tg_db'
-const SESSION_KEY = 'tg_session'
-
 export function StoreProvider({ children }) {
-  const [db, setDb] = useState(() => {
-    try {
-      const raw = localStorage.getItem(DB_KEY)
-      if (raw) { const d = JSON.parse(raw); if (d.version === 7) return d }
-    } catch { /* ignore */ }
-    return seed()
-  })
-  useEffect(() => { try { localStorage.setItem(DB_KEY, JSON.stringify(db)) } catch { /* quota */ } }, [db])
-
-  const [user, setUser] = useState(() => {
-    try { const s = localStorage.getItem(SESSION_KEY); if (s) return JSON.parse(s) } catch { /* ignore */ }
-    return null
-  })
-  useEffect(() => {
-    if (user) localStorage.setItem(SESSION_KEY, JSON.stringify(user))
-    else localStorage.removeItem(SESSION_KEY)
-  }, [user])
-
+  const [authReady, setAuthReady] = useState(false)
+  const [user, setUser] = useState(null)
+  const [db, setDbState] = useState(emptyDb)
   const [toasts, setToasts] = useState([])
+
+  const dbRef = useRef(emptyDb())
+  const lastSyncedRef = useRef(emptyDb())
+  const clubIdRef = useRef(null)
+  const timerRef = useRef(null)
+  const pending2faRef = useRef(false)
+
   const toast = useCallback((message, tone = 'success') => {
     const id = uid('t')
     setToasts(t => [...t, { id, message, tone }])
-    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3800)
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4200)
   }, [])
 
-  const login = useCallback((membreId) => {
-    const m = db.membres.find(x => x.id === membreId)
-    if (m) setUser({ id: m.id, nom: m.nom, role: m.role, twoFA: m.twoFA })
-  }, [db.membres])
+  /* -------- persistence: diff & push to Supabase -------- */
+  const flush = useCallback(async () => {
+    const prev = lastSyncedRef.current
+    const next = dbRef.current
+    const cid = clubIdRef.current
+    if (!cid || !next.tontine) return
+    lastSyncedRef.current = next
+    try {
+      const merged = (t) => t ? ({ ...t, ordrePassage: next.ordrePassage, caisse: next.caisse }) : t
+      if (JSON.stringify(merged(prev.tontine)) !== JSON.stringify(merged(next.tontine))) {
+        const { error } = await supabase.from('clubs').update(clubToRow(merged(next.tontine))).eq('id', cid)
+        if (error) throw error
+      }
+      // bureau : propager le rôle vers le profil du compte lié
+      const membreDiff = diffRows(prev.membres, next.membres)
+      for (const m of membreDiff.upserts) {
+        const before = (prev.membres || []).find(x => x.id === m.id)
+        if (m._user_id && before && before.role !== m.role) {
+          await supabase.from('profiles').update({ role: m.role }).eq('id', m._user_id)
+        }
+      }
+      for (const [key, table] of Object.entries(TABLES)) {
+        const { upserts, deletes } = diffRows(prev[key], next[key])
+        if (upserts.length) {
+          const rows = upserts.map(r => {
+            const row = { id: r.id, club_id: cid, payload: sanitize(r) }
+            if (key === 'membres' && r._user_id) row.user_id = r._user_id
+            return row
+          })
+          const { error } = await supabase.from(table).upsert(rows)
+          if (error) { lastSyncedRef.current = prev; throw error }
+        }
+        if (deletes.length) {
+          const { error } = await supabase.from(table).delete().in('id', deletes)
+          if (error) { lastSyncedRef.current = prev; throw error }
+        }
+      }
+    } catch (e) {
+      toast(`Erreur de synchronisation : ${e.message || e}`, 'error')
+    }
+  }, [toast])
 
-  const logout = useCallback(() => setUser(null), [])
+  /* -------- local state mutation (single source: dbRef) -------- */
+  const setDb = useCallback((mut) => {
+    const next = mut(dbRef.current)
+    if (next === dbRef.current) return
+    dbRef.current = next
+    setDbState(next)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => { flush() }, 350)
+  }, [flush])
 
-  const updateMe = useCallback((patch) => {
-    setDb(d => ({ ...d, membres: d.membres.map(m => m.id === user?.id ? { ...m, ...patch } : m) }))
-    if (user) setUser(u => ({ ...u, ...patch }))
-  }, [user])
+  /* -------- loading -------- */
+  const applyProfile = useCallback(async (profile, authUser) => {
+    setUser({
+      authId: profile.id,
+      id: profile.id,
+      email: authUser?.email || '',
+      nom: profile.nom || '',
+      role: profile.role || 'Membre',
+      tel: profile.telephone || '',
+      photo: profile.photo || null,
+      twoFA: !!profile.two_fa,
+      onboardingDone: !!profile.onboarding_done,
+      clubId: profile.club_id,
+    })
+    if (profile.club_id) {
+      const cid = profile.club_id
+      clubIdRef.current = cid
+      const queries = [
+        supabase.from('clubs').select('*').eq('id', cid).maybeSingle(),
+        ...Object.entries(TABLES).map(([k, t]) =>
+          k === 'membres'
+            ? supabase.from(t).select('id, payload, user_id').eq('club_id', cid)
+            : supabase.from(t).select('id, payload').eq('club_id', cid)),
+      ]
+      const results = await Promise.all(queries)
+      const firstErr = results.find(r => r.error)
+      if (firstErr) { toast(`Erreur de chargement : ${firstErr.error.message}`, 'error'); return }
+      const data = emptyDb()
+      data.tontine = results[0].data ? clubFromRow(results[0].data) : null
+      Object.keys(TABLES).forEach((k, i) => {
+        data[k] = (results[i + 1].data || []).map(r => {
+          const obj = { ...(r.payload || {}), id: r.id }
+          if (k === 'membres' && r.user_id) obj._user_id = r.user_id
+          return obj
+        })
+      })
+      data.ordrePassage = data.tontine?.ordrePassage || []
+      data.caisse = data.tontine?.caisse || { XAF: { Caisse: 0, Banque: 0, OM: 0, MoMo: 0 }, EUR: { Caisse: 0, Banque: 0 } }
+      const me = data.membres.find(m => m._user_id === profile.id)
+      dbRef.current = data
+      lastSyncedRef.current = data
+      setDbState(data)
+      setUser(u => u ? { ...u, id: me?.id || profile.id } : u)
+    }
+  }, [toast])
 
-  const store = useMemo(() => ({ db, setDb, toast, toasts }), [db, toast, toasts])
-  const auth = useMemo(() => ({ user, login, logout, updateMe }), [user, login, logout, updateMe])
+  const resetState = useCallback(() => {
+    clubIdRef.current = null
+    pending2faRef.current = false
+    dbRef.current = emptyDb()
+    lastSyncedRef.current = emptyDb()
+    setDbState(emptyDb())
+    setUser(null)
+  }, [])
+
+  /* -------- session bootstrap -------- */
+  useEffect(() => {
+    let active = true
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!active) return
+      if (data?.session?.user) {
+        const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.session.user.id).maybeSingle()
+        if (profile && !profile.two_fa) await applyProfile(profile, data.session.user)
+        else if (profile) { pending2faRef.current = true; await supabase.auth.signOut() }
+      }
+      if (active) setAuthReady(true)
+    })
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') resetState()
+    })
+    return () => { active = false; sub.subscription.unsubscribe() }
+  }, [applyProfile, resetState])
+
+  /* -------- auth actions -------- */
+  const fetchProfile = async (authId) => {
+    const { data } = await supabase.from('profiles').select('*').eq('id', authId).maybeSingle()
+    return data
+  }
+
+  const signIn = useCallback(async (email, password) => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) return { error: traduire(error) }
+    const profile = await fetchProfile(data.user.id)
+    if (!profile) return { error: 'Profil introuvable — contactez le bureau du club.' }
+    if (profile.two_fa) {
+      const code = String(Math.floor(100000 + Math.random() * 900000))
+      await supabase.from('profiles').update({ two_fa_code: code }).eq('id', profile.id)
+      pending2faRef.current = { email, password }
+      await supabase.auth.signOut()
+      return { need2fa: true, code }
+    }
+    await applyProfile(profile, data.user)
+    return {}
+  }, [applyProfile])
+
+  const confirm2fa = useCallback(async (code) => {
+    const pending = pending2faRef.current
+    if (!pending) return { error: 'Session expirée — reconnectez-vous.' }
+    const { data, error } = await supabase.auth.signInWithPassword({ email: pending.email, password: pending.password })
+    if (error) return { error: traduire(error) }
+    const profile = await fetchProfile(data.user.id)
+    if (!profile || profile.two_fa_code !== code) {
+      await supabase.auth.signOut()
+      return { error: 'Code de vérification incorrect.' }
+    }
+    await supabase.from('profiles').update({ two_fa_code: null }).eq('id', profile.id)
+    pending2faRef.current = false
+    await applyProfile(profile, data.user)
+    return {}
+  }, [applyProfile])
+
+  const signUp = useCallback(async ({ nom, telephone, email, password }) => {
+    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { nom, telephone } } })
+    if (error) return { error: traduire(error) }
+    if (!data.session) return { needConfirm: true }
+    let profile = await fetchProfile(data.user.id)
+    if (!profile) {
+      await supabase.from('profiles').insert({ id: data.user.id, nom, telephone })
+      profile = await fetchProfile(data.user.id)
+    }
+    await applyProfile(profile || { id: data.user.id, nom, telephone, role: 'Membre' }, data.user)
+    return {}
+  }, [applyProfile])
+
+  const resetPassword = useCallback(async (email) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email)
+    if (error) return { error: traduire(error) }
+    return {}
+  }, [])
+
+  const changePassword = useCallback(async (password) => {
+    const { error } = await supabase.auth.updateUser({ password })
+    if (error) return { error: traduire(error) }
+    return {}
+  }, [])
+
+  const signOut = useCallback(async () => {
+    await supabase.auth.signOut()
+    resetState()
+  }, [resetState])
+
+  /* -------- club actions -------- */
+  const createClub = useCallback(async (form) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { error: 'Session expirée.' }
+    const { data: club, error } = await supabase.from('clubs').insert({
+      nom: form.nom,
+      ville: form.ville || '',
+      type: form.type || 'Rotative',
+      montant_cotisation: Number(form.montantCotisation) || 0,
+      statut: 'Active',
+      created_by: user.id,
+      payload: {
+        frequence: form.frequence || 'Mensuelle',
+        penaliteRetard: Number(form.penaliteRetard) || 0,
+        tauxPret: Number(form.tauxPret) || 10,
+        dateDebut: today(),
+        banque: form.banque || '',
+        ordrePassage: [],
+        caisse: { XAF: { Caisse: 0, Banque: 0, OM: 0, MoMo: 0 }, EUR: { Caisse: 0, Banque: 0 } },
+      },
+    }).select('*').single()
+    if (error) return { error: traduire(error) }
+    await supabase.from('profiles').update({ club_id: club.id, role: 'President' }).eq('id', user.id)
+    const memberId = uid('m')
+    await supabase.from('members').insert({
+      id: memberId, club_id: club.id, user_id: user.id,
+      payload: { id: memberId, nom: form.nomPresident || form.nom || 'Président', role: 'President', tel: form.telephone || '', email: user.email || '', statut: 'Actif', dateAdhesion: today(), photo: null },
+    })
+    await applyProfile({ ...(await fetchProfile(user.id)), club_id: club.id, role: 'President' }, user)
+    return { club }
+  }, [applyProfile])
+
+  const joinClub = useCallback(async (code) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { error: 'Session expirée.' }
+    const { data: club } = await supabase.from('clubs').select('*').eq('code', String(code || '').trim().toUpperCase()).maybeSingle()
+    if (!club) return { error: 'Aucun club trouvé avec ce code.' }
+    const profile = await fetchProfile(user.id)
+    const memberId = uid('m')
+    const { error } = await supabase.from('members').insert({
+      id: memberId, club_id: club.id, user_id: user.id,
+      payload: { id: memberId, nom: profile?.nom || user.email, role: 'Membre', tel: profile?.telephone || '', email: user.email || '', statut: 'Actif', dateAdhesion: today(), photo: null },
+    })
+    if (error) return { error: 'Impossible de rejoindre ce club : ' + traduire(error) }
+    await supabase.from('profiles').update({ club_id: club.id, role: 'Membre' }).eq('id', user.id)
+    await applyProfile({ ...(profile || {}), club_id: club.id, role: 'Membre' }, user)
+    return { club }
+  }, [applyProfile])
+
+  const completeOnboarding = useCallback(async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) await supabase.from('profiles').update({ onboarding_done: true }).eq('id', user.id)
+    setUser(u => u ? { ...u, onboardingDone: true } : u)
+  }, [])
+
+  const updateMe = useCallback(async (patch) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      const profPatch = {}
+      if ('nom' in patch) profPatch.nom = patch.nom
+      if ('tel' in patch) profPatch.telephone = patch.tel
+      if ('photo' in patch) profPatch.photo = patch.photo
+      if ('twoFA' in patch) profPatch.two_fa = !!patch.twoFA
+      if (Object.keys(profPatch).length) await supabase.from('profiles').update(profPatch).eq('id', user.id)
+    }
+    const me = (dbRef.current.membres || []).find(m => m._user_id === user?.id || m.id === user?.id)
+    if (me) {
+      const next = { ...me, ...patch }
+      const rowPatch = { payload: sanitize(next) }
+      if ('_user_id' in me) rowPatch.user_id = me._user_id
+      const { error } = await supabase.from('members').update(rowPatch).eq('id', me.id)
+      if (!error) {
+        const nextDb = { ...dbRef.current, membres: dbRef.current.membres.map(m => m.id === me.id ? next : m) }
+        dbRef.current = nextDb
+        lastSyncedRef.current = nextDb
+        setDbState(nextDb)
+      }
+    }
+    setUser(u => u ? { ...u, ...patch } : u)
+    return {}
+  }, [])
+
+  const store = useMemo(() => ({ db, setDb, toast, toasts }), [db, setDb, toast, toasts])
+  const auth = useMemo(() => ({
+    user, authReady, signIn, confirm2fa, signUp, resetPassword, changePassword,
+    signOut, createClub, joinClub, completeOnboarding, updateMe,
+  }), [user, authReady, signIn, confirm2fa, signUp, resetPassword, changePassword, signOut, createClub, joinClub, completeOnboarding, updateMe])
 
   return (
     <StoreCtx.Provider value={store}>
