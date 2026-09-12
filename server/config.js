@@ -29,11 +29,17 @@ const env = (k) => String(process.env[k] || '').trim()
 export const config = {
   port: Number(env('PORT')) || 8787,
   db: {
+    /* Client : 'mysql' (dev local) ou 'pg' (PostgreSQL — production Render).
+       DB_CLIENT=pg active le driver PostgreSQL ; DATABASE_URL (Render Postgres)
+       est prioritaire sur les DB_* individuels. */
+    client: env('DB_CLIENT') === 'pg' || !!env('DATABASE_URL') ? 'pg' : 'mysql',
+    url: env('DATABASE_URL') || null,
     host: env('DB_HOST') || '127.0.0.1',
-    port: Number(env('DB_PORT')) || 3306,
+    port: Number(env('DB_PORT')) || (env('DB_CLIENT') === 'pg' ? 5432 : 3306),
     user: env('DB_USER') || 'root',
     password: env('DB_PASSWORD') || '',
-    database: env('DB_NAME') || 'tontigest',
+    name: env('DB_NAME') || 'tontigest',
+    ssl: env('DB_SSL') === 'true',
   },
   jwtSecret: env('JWT_SECRET') || 'tontigest-secret-local-dev-key-change-me',
   jwtExpires: env('JWT_EXPIRES') || '7d',

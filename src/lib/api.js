@@ -59,6 +59,8 @@ export const api = {
   // Utilisateur courant
   updateMe: (patch) => request('PATCH', '/users/me', patch),
   completeOnboarding: () => request('POST', '/users/me/onboarding'),
+  request2fa: () => request('POST', '/users/me/2fa/request'),
+  confirm2faActivation: (code) => request('POST', '/users/me/2fa/confirm', { code }),
 
   // Clubs
   createClub: (payload) => request('POST', '/clubs', payload),
@@ -80,4 +82,13 @@ export const api = {
   paymentStatus: (ref) => request('GET', `/payments/${ref}/status`),
   simulatePayment: (ref) => request('POST', `/payments/${ref}/simulate`),
   notifyExternal: (payload) => request('POST', '/notify/external', payload),
+
+  // Messagerie interne
+  conversations: () => request('GET', '/messages/conversations'),
+  contacts: () => request('GET', '/messages/contacts'),
+  openConversation: (contactId) => request('POST', '/messages/conversations', { contactId }),
+  createGroup: (sujet, memberIds) => request('POST', '/messages/conversations/group', { sujet, memberIds }),
+  conversationMessages: (id) => request('GET', `/messages/conversations/${id}`),
+  sendMessage: (id, body) => request('POST', `/messages/conversations/${id}/messages`, { body }),
+  unreadCount: () => request('GET', '/messages/unread-count'),
 }

@@ -14,8 +14,9 @@
    MODE SANDBOX : clés pk_sandbox/sk_sandbox, environment 'sandbox' — aucun argent réel.
    MODE SIMULATION (aucune clé) : cycle identique, confirmation manuelle explicite. */
 
-import { q } from './db.js'
+import { q, upsertSql } from './db.js'
 import { geniuspay } from './config.js'
+import { emailCotisationConfirmee } from './notify.js'
 
 /* Méthodes de paiement GeniusPay (payment_method).
    TontiGest propose OM / MoMo / carte ; on transmet la correspondance. */
@@ -82,18 +83,14 @@ export async function initiatePayment({ userId, clubId, membreId, montant, metho
   const mode = geniuspay.configured ? (geniuspay.sandbox ? 'geniuspay-sandbox' : 'geniuspay') : 'simulation'
 
   await q(
-    `INSERT INTO payment_transactions (ref, user_id, club_id, membre_id, amount, currency, channel, phone, period, provider, status, created_at)
-     VALUES (?,?,?,?,?,?,?, ?, ?,?, 'pending', NOW())
-     ON DUPLICATE KEY UPDATE amount = VALUES(amount)`,
-    [ref, userId, clubId, membreId, montant, 'XOF', METHODS[methode] || methode, tel || null, periode, mode]
-  ).catch(async () => {
-    // Colonne membre_id absente (migration pas encore passée) — insertion sans elle.
-    return q(
-      `INSERT INTO payment_transactions (ref, user_id, club_id, amount, currency, channel, phone, period, provider, status, created_at)
-       VALUES (?,?,?,?,?,?,?, ?,?, 'pending', NOW())`,
-      [ref, userId, clubId, montant, 'XOF', METHODS[methode] || methode, tel || null, periode, mode]
-    )
-  })
+    upsertSql({
+      table: 'payment_transactions',
+      cols: ['ref', 'user_id', 'club_id', 'membre_id', 'amount', 'currency', 'channel', 'phone', 'period', 'provider', 'status', 'created_at'],
+      key: 'ref',
+      updateCols: ['amount'],
+    }),
+    [ref, userId, clubId, membreId, montant, 'XOF', METHODS[methode] || methode, tel || null, periode, mode, 'pending', new Date().toISOString().slice(0, 19).replace('T', ' ')]
+  )
 
   let paymentUrl = null
   let environment = geniuspay.sandbox ? 'sandbox' : null
@@ -163,14 +160,25 @@ async function markSuccess(ref, meta) {
     methode: tx.channel, ref, statut: 'En attente',
   }
   await q(
-    `INSERT INTO records (entity, id, club_id, user_id, payload) VALUES ('cotisations', ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE payload = VALUES(payload)`,
-    [cotId, tx.club_id, tx.user_id, JSON.stringify(cotisation)]
+    upsertSql({
+      table: 'records',
+      cols: ['entity', 'id', 'club_id', 'user_id', 'payload'],
+      key: ['entity', 'id'],
+      updateCols: ['payload'],
+    }),
+    ['cotisations', cotId, tx.club_id, tx.user_id, JSON.stringify(cotisation)]
   )
   try {
     const { PROJECTORS } = await import('./relational.js')
     if (PROJECTORS.cotisations) await PROJECTORS.cotisations(tx.club_id, cotisation)
   } catch { /* projection best-effort */ }
+  /* Email automatique de confirmation au membre (silencieux si Mailjet absent). */
+  try {
+    const [u] = await q('SELECT email, nom FROM users WHERE id = ?', [tx.user_id])
+    if (u.length) {
+      emailCotisationConfirmee({ email: u[0].email, nom: u[0].nom, montant: tx.amount, periode: tx.period, ref }).catch(() => {})
+    }
+  } catch { /* relais best-effort */ }
 }
 
 /* Le membre confirme manuellement en mode simulation uniquement. */

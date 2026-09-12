@@ -1,13 +1,20 @@
-# TontiGest — configuration de déploiement Render (web service)
+# TontiGest — configuration de déploiement Render
+# Stack : web service Node (free) + PostgreSQL managé (free).
+#
+# La base Render Postgres expose DATABASE_URL — le serveur (server/db.js)
+# détecte DB_CLIENT=pg / DATABASE_URL et bascule automatiquement sur le
+# driver PostgreSQL avec TLS. Le schéma est appliqué au démarrage.
+#
 # Plan gratuit : le service s'endort après 15 min d'inactivité,
 # le premier clic le réveille en ~30s. Astuce anti-sommeil : cron-job.org
 # qui appelle /api/health toutes les 10 minutes (voir DEPLOIEMENT.md).
-#
-# BASE DE DONNÉES : Render ne propose plus de MySQL managé.
-# Le serveur se connecte via DB_HOST/DB_USER/DB_PASSWORD/DB_NAME (env vars),
-# définis dans le dashboard Render — par exemple vers une base MySQL gratuite
-# externe (TiDB Cloud Serverless : 5 Go gratuits, protocole MySQL) ou tout
-# autre MySQL accessible sur Internet.
+
+databases:
+  - name: tontigest-db
+    databaseName: tontigest
+    user: tontigest
+    plan: free
+    region: frankfurt
 
 services:
   - type: web
@@ -21,17 +28,13 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # --- Base MySQL externe (renseigner dans le dashboard) ---
-      - key: DB_HOST
-        sync: false
-      - key: DB_PORT
-        value: "3306"   # 4000 pour TiDB Cloud Serverless
-      - key: DB_USER
-        sync: false
-      - key: DB_PASSWORD
-        sync: false
-      - key: DB_NAME
-        sync: false
+      # --- PostgreSQL (DATABASE_URL injecté par Render) ---
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tontigest-db
+          property: connectionString
+      - key: DB_CLIENT
+        value: pg
       # --- Sécurité ---
       - key: JWT_SECRET
         generateValue: true

@@ -1,9 +1,11 @@
 // TontiGest — projections relationnelles
-// Chaque entité du transport `records` est projetée dans ses tables MySQL
-// dédiées (schéma complet). Les fonctions reçoivent la payload telle
-// qu'envoyée par le front et écrivent/remplacent les lignes relationnelles.
+// Chaque entité du transport `records` est projetée dans ses tables dédiées
+// (schéma complet). Les fonctions reçoivent la payload telle qu'envoyée
+// par le front et écrivent/remplacent les lignes relationnelles.
+// Les upserts passent par les helpers polyglottes de db.js
+// (MySQL : ON DUPLICATE KEY UPDATE — PostgreSQL : ON CONFLICT DO UPDATE).
 
-import { q } from './db.js'
+import { q, upsertSql, insertIgnoreSql } from './db.js'
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
 const str = (v) => (v === null || v === undefined ? '' : String(v))
@@ -27,11 +29,12 @@ const dtOrNull = (v) => {
 export async function projectMembre(clubId, p) {
   const userId = p._userId || p.user_id || null
   await q(
-    `INSERT INTO membres (id, club_id, user_id, nom, telephone, email, profession, role, statut, date_adhesion)
-     VALUES (?,?,?,?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), nom=VALUES(nom), telephone=VALUES(telephone),
-       email=VALUES(email), profession=VALUES(profession), role=VALUES(role), statut=VALUES(statut),
-       date_adhesion=VALUES(date_adhesion)`,
+    upsertSql({
+      table: 'membres',
+      cols: ['id', 'club_id', 'user_id', 'nom', 'telephone', 'email', 'profession', 'role', 'statut', 'date_adhesion'],
+      key: 'id',
+      updateCols: ['user_id', 'nom', 'telephone', 'email', 'profession', 'role', 'statut', 'date_adhesion'],
+    }),
     [p.id, clubId, userId, str(p.nom), str(p.tel), str(p.email),
       str(p.profession), str(p.role || 'Membre'), str(p.statut || 'Actif'), dateOrNull(p.dateAdhesion)]
   )
@@ -43,10 +46,12 @@ export async function projectMembre(clubId, p) {
 /* ---------- cotisations ---------- */
 export async function projectCotisation(clubId, p) {
   await q(
-    `INSERT INTO cotisations (id, club_id, membre_id, montant, devise, periode, date_paiement, methode, reference, statut)
-     VALUES (?,?,?,?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE montant=VALUES(montant), devise=VALUES(devise), periode=VALUES(periode),
-       date_paiement=VALUES(date_paiement), methode=VALUES(methode), reference=VALUES(reference), statut=VALUES(statut)`,
+    upsertSql({
+      table: 'cotisations',
+      cols: ['id', 'club_id', 'membre_id', 'montant', 'devise', 'periode', 'date_paiement', 'methode', 'reference', 'statut'],
+      key: 'id',
+      updateCols: ['montant', 'devise', 'periode', 'date_paiement', 'methode', 'reference', 'statut'],
+    }),
     [p.id, clubId, str(p.membreId), num(p.montant), str(p.devise || 'XAF'), str(p.periode),
       dateOrNull(p.date), str(p.methode), str(p.ref), str(p.statut || 'En attente')]
   )
@@ -55,10 +60,12 @@ export async function projectCotisation(clubId, p) {
 /* ---------- mouvements ---------- */
 export async function projectMouvement(clubId, p) {
   await q(
-    `INSERT INTO mouvements (id, club_id, membre_id, type, sens, compte, montant, devise, date_mvt, note, piece)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE membre_id=VALUES(membre_id), type=VALUES(type), sens=VALUES(sens), compte=VALUES(compte),
-       montant=VALUES(montant), devise=VALUES(devise), date_mvt=VALUES(date_mvt), note=VALUES(note), piece=VALUES(piece)`,
+    upsertSql({
+      table: 'mouvements',
+      cols: ['id', 'club_id', 'membre_id', 'type', 'sens', 'compte', 'montant', 'devise', 'date_mvt', 'note', 'piece'],
+      key: 'id',
+      updateCols: ['membre_id', 'type', 'sens', 'compte', 'montant', 'devise', 'date_mvt', 'note', 'piece'],
+    }),
     [p.id, clubId, p.membreId ? str(p.membreId) : null, str(p.type), p.sens === 'out' ? 'out' : 'in',
       str(p.compte || 'Caisse'), num(p.montant), str(p.devise || 'XAF'), dateOrNull(p.date),
       p.note ? str(p.note).slice(0, 2000) : null, p.piece ? str(p.piece).slice(0, 2000) : null]
@@ -68,9 +75,12 @@ export async function projectMouvement(clubId, p) {
 /* ---------- penalites ---------- */
 export async function projectPenalite(clubId, p) {
   await q(
-    `INSERT INTO penalites (id, club_id, membre_id, montant, motif, date_pen, payee)
-     VALUES (?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE montant=VALUES(montant), motif=VALUES(motif), date_pen=VALUES(date_pen), payee=VALUES(payee)`,
+    upsertSql({
+      table: 'penalites',
+      cols: ['id', 'club_id', 'membre_id', 'montant', 'motif', 'date_pen', 'payee'],
+      key: 'id',
+      updateCols: ['montant', 'motif', 'date_pen', 'payee'],
+    }),
     [p.id, clubId, str(p.membreId), num(p.montant), str(p.motif).slice(0, 250), dateOrNull(p.date), p.payee ? 1 : 0]
   )
 }
@@ -78,9 +88,12 @@ export async function projectPenalite(clubId, p) {
 /* ---------- epargne (+ versements) ---------- */
 export async function projectEpargne(clubId, p) {
   await q(
-    `INSERT INTO epargne (id, club_id, membre_id, type, solde, bloquee)
-     VALUES (?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE membre_id=VALUES(membre_id), type=VALUES(type), solde=VALUES(solde), bloquee=VALUES(bloquee)`,
+    upsertSql({
+      table: 'epargne',
+      cols: ['id', 'club_id', 'membre_id', 'type', 'solde', 'bloquee'],
+      key: 'id',
+      updateCols: ['membre_id', 'type', 'solde', 'bloquee'],
+    }),
     [p.id, clubId, str(p.membreId), str(p.type || 'Volontaire'), num(p.solde), num(p.bloquee)]
   )
   await q('DELETE FROM epargne_versements WHERE epargne_id = ?', [p.id])
@@ -95,26 +108,34 @@ export async function projectEpargne(clubId, p) {
 /* ---------- groupes_epargne (+ composition) ---------- */
 export async function projectGroupe(clubId, p) {
   await q(
-    `INSERT INTO groupes_epargne (id, club_id, nom, solde, objectif)
-     VALUES (?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE nom=VALUES(nom), solde=VALUES(solde), objectif=VALUES(objectif)`,
+    upsertSql({
+      table: 'groupes_epargne',
+      cols: ['id', 'club_id', 'nom', 'solde', 'objectif'],
+      key: 'id',
+      updateCols: ['nom', 'solde', 'objectif'],
+    }),
     [p.id, clubId, str(p.nom), num(p.solde), num(p.objectif)]
   )
   await q('DELETE FROM groupe_membres WHERE groupe_id = ?', [p.id])
   const ms = Array.isArray(p.membres) ? p.membres : []
   for (const mid of ms) {
     if (!mid) continue
-    await q('INSERT IGNORE INTO groupe_membres (groupe_id, membre_id) VALUES (?,?)', [p.id, mid])
+    await q(
+      insertIgnoreSql({ table: 'groupe_membres', cols: ['groupe_id', 'membre_id'], key: ['groupe_id', 'membre_id'] }),
+      [p.id, mid]
+    )
   }
 }
 
 /* ---------- prets (+ garants) ---------- */
 export async function projectPret(clubId, p) {
   await q(
-    `INSERT INTO prets (id, club_id, membre_id, montant, taux, interet, reste, statut, motif, date_demande)
-     VALUES (?,?,?,?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE montant=VALUES(montant), taux=VALUES(taux), interet=VALUES(interet), reste=VALUES(reste),
-       statut=VALUES(statut), motif=VALUES(motif), date_demande=VALUES(date_demande)`,
+    upsertSql({
+      table: 'prets',
+      cols: ['id', 'club_id', 'membre_id', 'montant', 'taux', 'interet', 'reste', 'statut', 'motif', 'date_demande'],
+      key: 'id',
+      updateCols: ['montant', 'taux', 'interet', 'reste', 'statut', 'motif', 'date_demande'],
+    }),
     [p.id, clubId, str(p.membreId), num(p.montant), num(p.taux), num(p.interet), num(p.reste),
       str(p.statut || 'En attente'), str(p.motif).slice(0, 250), dateOrNull(p.dateDemande)]
   )
@@ -122,33 +143,44 @@ export async function projectPret(clubId, p) {
   const gs = Array.isArray(p.garants) ? p.garants : []
   for (const gid of gs) {
     if (!gid) continue
-    await q('INSERT IGNORE INTO pret_garants (pret_id, garant_id) VALUES (?,?)', [p.id, gid])
+    await q(
+      insertIgnoreSql({ table: 'pret_garants', cols: ['pret_id', 'garant_id'], key: ['pret_id', 'garant_id'] }),
+      [p.id, gid]
+    )
   }
 }
 
 /* ---------- redistributions (+ parts) ---------- */
 export async function projectRedistribution(clubId, p) {
   await q(
-    `INSERT INTO redistributions (id, club_id, total, date_red) VALUES (?,?,?,?)
-     ON DUPLICATE KEY UPDATE total=VALUES(total), date_red=VALUES(date_red)`,
+    upsertSql({
+      table: 'redistributions',
+      cols: ['id', 'club_id', 'total', 'date_red'],
+      key: 'id',
+      updateCols: ['total', 'date_red'],
+    }),
     [p.id, clubId, num(p.total), dateOrNull(p.date)]
   )
   await q('DELETE FROM redistribution_parts WHERE redistribution_id = ?', [p.id])
   const parts = Array.isArray(p.parts) ? p.parts : []
   for (const part of parts) {
     if (!part?.membreId) continue
-    await q('INSERT IGNORE INTO redistribution_parts (redistribution_id, membre_id, montant) VALUES (?,?,?)',
-      [p.id, part.membreId, num(part.montant)])
+    await q(
+      insertIgnoreSql({ table: 'redistribution_parts', cols: ['redistribution_id', 'membre_id', 'montant'], key: ['redistribution_id', 'membre_id'] }),
+      [p.id, part.membreId, num(part.montant)]
+    )
   }
 }
 
 /* ---------- aides ---------- */
 export async function projectAide(clubId, p) {
   await q(
-    `INSERT INTO aides (id, club_id, membre_id, type, montant, statut, motif, date_aide)
-     VALUES (?,?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE type=VALUES(type), montant=VALUES(montant), statut=VALUES(statut),
-       motif=VALUES(motif), date_aide=VALUES(date_aide)`,
+    upsertSql({
+      table: 'aides',
+      cols: ['id', 'club_id', 'membre_id', 'type', 'montant', 'statut', 'motif', 'date_aide'],
+      key: 'id',
+      updateCols: ['type', 'montant', 'statut', 'motif', 'date_aide'],
+    }),
     [p.id, clubId, str(p.membreId), str(p.type), num(p.montant), str(p.statut || 'En attente'),
       str(p.motif).slice(0, 250), dateOrNull(p.date)]
   )
@@ -157,9 +189,12 @@ export async function projectAide(clubId, p) {
 /* ---------- seances (+ presences) ---------- */
 export async function projectSeance(clubId, p) {
   await q(
-    `INSERT INTO seances (id, club_id, titre, date_s, lieu, statut, pv) VALUES (?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE titre=VALUES(titre), date_s=VALUES(date_s), lieu=VALUES(lieu),
-       statut=VALUES(statut), pv=VALUES(pv)`,
+    upsertSql({
+      table: 'seances',
+      cols: ['id', 'club_id', 'titre', 'date_s', 'lieu', 'statut', 'pv'],
+      key: 'id',
+      updateCols: ['titre', 'date_s', 'lieu', 'statut', 'pv'],
+    }),
     [p.id, clubId, str(p.titre), dateOrNull(p.date), str(p.lieu), str(p.statut || 'Planifiée'),
       p.pv ? str(p.pv).slice(0, 4000) : null]
   )
@@ -167,17 +202,22 @@ export async function projectSeance(clubId, p) {
   const pres = p.presences || {}
   for (const [mid, present] of Object.entries(pres)) {
     if (!mid) continue
-    await q('INSERT IGNORE INTO seance_presences (seance_id, membre_id, present) VALUES (?,?,?)',
-      [p.id, mid, present ? 1 : 0])
+    await q(
+      insertIgnoreSql({ table: 'seance_presences', cols: ['seance_id', 'membre_id', 'present'], key: ['seance_id', 'membre_id'] }),
+      [p.id, mid, present ? 1 : 0]
+    )
   }
 }
 
 /* ---------- convocations ---------- */
 export async function projectConvocation(clubId, p) {
   await q(
-    `INSERT INTO convocations (id, club_id, seance_id, canal, message, envoyees, date_c) VALUES (?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE seance_id=VALUES(seance_id), canal=VALUES(canal), message=VALUES(message),
-       envoyees=VALUES(envoyees), date_c=VALUES(date_c)`,
+    upsertSql({
+      table: 'convocations',
+      cols: ['id', 'club_id', 'seance_id', 'canal', 'message', 'envoyees', 'date_c'],
+      key: 'id',
+      updateCols: ['seance_id', 'canal', 'message', 'envoyees', 'date_c'],
+    }),
     [p.id, clubId, p.seanceId ? str(p.seanceId) : null, str(p.canal), p.message ? str(p.message).slice(0, 2000) : null,
       Math.trunc(num(p.envoyees)), dtOrNull(p.date)]
   )
@@ -186,8 +226,12 @@ export async function projectConvocation(clubId, p) {
 /* ---------- parrainages ---------- */
 export async function projectParrainage(clubId, p) {
   await q(
-    `INSERT INTO parrainages (id, club_id, membre_id, parrain_id, date_p) VALUES (?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE parrain_id=VALUES(parrain_id), date_p=VALUES(date_p)`,
+    upsertSql({
+      table: 'parrainages',
+      cols: ['id', 'club_id', 'membre_id', 'parrain_id', 'date_p'],
+      key: 'id',
+      updateCols: ['parrain_id', 'date_p'],
+    }),
     [p.id, clubId, str(p.membreId), str(p.parrainId), dateOrNull(p.date)]
   )
 }
@@ -195,9 +239,12 @@ export async function projectParrainage(clubId, p) {
 /* ---------- reclamations ---------- */
 export async function projectReclamation(clubId, p) {
   await q(
-    `INSERT INTO reclamations (id, club_id, membre_id, sujet, detail, statut, reponse, date_r) VALUES (?,?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE sujet=VALUES(sujet), detail=VALUES(detail), statut=VALUES(statut),
-       reponse=VALUES(reponse), date_r=VALUES(date_r)`,
+    upsertSql({
+      table: 'reclamations',
+      cols: ['id', 'club_id', 'membre_id', 'sujet', 'detail', 'statut', 'reponse', 'date_r'],
+      key: 'id',
+      updateCols: ['sujet', 'detail', 'statut', 'reponse', 'date_r'],
+    }),
     [p.id, clubId, str(p.membreId), str(p.sujet).slice(0, 180), p.detail ? str(p.detail).slice(0, 2000) : null,
       str(p.statut || 'Ouverte'), p.reponse ? str(p.reponse).slice(0, 2000) : null, dateOrNull(p.date)]
   )
@@ -206,8 +253,12 @@ export async function projectReclamation(clubId, p) {
 /* ---------- sanctions ---------- */
 export async function projectSanction(clubId, p) {
   await q(
-    `INSERT INTO sanctions (id, club_id, membre_id, type, motif, date_s) VALUES (?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE type=VALUES(type), motif=VALUES(motif), date_s=VALUES(date_s)`,
+    upsertSql({
+      table: 'sanctions',
+      cols: ['id', 'club_id', 'membre_id', 'type', 'motif', 'date_s'],
+      key: 'id',
+      updateCols: ['type', 'motif', 'date_s'],
+    }),
     [p.id, clubId, str(p.membreId), str(p.type), str(p.motif).slice(0, 250), dateOrNull(p.date)]
   )
 }
@@ -215,9 +266,12 @@ export async function projectSanction(clubId, p) {
 /* ---------- rapports ---------- */
 export async function projectRapport(clubId, p) {
   await q(
-    `INSERT INTO rapports (id, club_id, periode, type, statut, auteur, resume, date_r) VALUES (?,?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE periode=VALUES(periode), type=VALUES(type), statut=VALUES(statut),
-       auteur=VALUES(auteur), resume=VALUES(resume), date_r=VALUES(date_r)`,
+    upsertSql({
+      table: 'rapports',
+      cols: ['id', 'club_id', 'periode', 'type', 'statut', 'auteur', 'resume', 'date_r'],
+      key: 'id',
+      updateCols: ['periode', 'type', 'statut', 'auteur', 'resume', 'date_r'],
+    }),
     [p.id, clubId, str(p.periode), str(p.type), str(p.statut || 'Soumis'), str(p.auteur),
       p.resume ? str(p.resume).slice(0, 2000) : null, dateOrNull(p.date)]
   )
@@ -226,9 +280,12 @@ export async function projectRapport(clubId, p) {
 /* ---------- alertes ---------- */
 export async function projectAlerte(clubId, p) {
   await q(
-    `INSERT INTO alertes (id, club_id, auteur, type, message, statut, date_a) VALUES (?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE auteur=VALUES(auteur), type=VALUES(type), message=VALUES(message),
-       statut=VALUES(statut), date_a=VALUES(date_a)`,
+    upsertSql({
+      table: 'alertes',
+      cols: ['id', 'club_id', 'auteur', 'type', 'message', 'statut', 'date_a'],
+      key: 'id',
+      updateCols: ['auteur', 'type', 'message', 'statut', 'date_a'],
+    }),
     [p.id, clubId, str(p.de || p.auteur), str(p.type), p.message ? str(p.message).slice(0, 2000) : null,
       str(p.statut || 'Ouverte'), dateOrNull(p.date)]
   )
@@ -237,9 +294,12 @@ export async function projectAlerte(clubId, p) {
 /* ---------- audits ---------- */
 export async function projectAudit(clubId, p) {
   await q(
-    `INSERT INTO audits (id, club_id, cible, verdict, note, auditeur, date_au) VALUES (?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE cible=VALUES(cible), verdict=VALUES(verdict), note=VALUES(note),
-       auditeur=VALUES(auditeur), date_au=VALUES(date_au)`,
+    upsertSql({
+      table: 'audits',
+      cols: ['id', 'club_id', 'cible', 'verdict', 'note', 'auditeur', 'date_au'],
+      key: 'id',
+      updateCols: ['cible', 'verdict', 'note', 'auditeur', 'date_au'],
+    }),
     [p.id, clubId, str(p.cible), str(p.verdict), p.note ? str(p.note).slice(0, 2000) : null,
       str(p.par || p.auditeur), dateOrNull(p.date)]
   )
@@ -248,8 +308,12 @@ export async function projectAudit(clubId, p) {
 /* ---------- annonces ---------- */
 export async function projectAnnonce(clubId, p) {
   await q(
-    `INSERT INTO annonces (id, club_id, message, canal, cible, date_n) VALUES (?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE message=VALUES(message), canal=VALUES(canal), cible=VALUES(cible), date_n=VALUES(date_n)`,
+    upsertSql({
+      table: 'annonces',
+      cols: ['id', 'club_id', 'message', 'canal', 'cible', 'date_n'],
+      key: 'id',
+      updateCols: ['message', 'canal', 'cible', 'date_n'],
+    }),
     [p.id, clubId, p.message ? str(p.message).slice(0, 2000) : null, str(p.canal), str(p.cible), dateOrNull(p.date)]
   )
 }
@@ -257,8 +321,12 @@ export async function projectAnnonce(clubId, p) {
 /* ---------- notifications ---------- */
 export async function projectNotification(clubId, p) {
   await q(
-    `INSERT INTO notifications (id, club_id, membre_id, titre, message, lu, date_n) VALUES (?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE titre=VALUES(titre), message=VALUES(message), lu=VALUES(lu), date_n=VALUES(date_n)`,
+    upsertSql({
+      table: 'notifications',
+      cols: ['id', 'club_id', 'membre_id', 'titre', 'message', 'lu', 'date_n'],
+      key: 'id',
+      updateCols: ['titre', 'message', 'lu', 'date_n'],
+    }),
     [p.id, clubId, str(p.pour), str(p.titre).slice(0, 180), p.message ? str(p.message).slice(0, 2000) : null,
       p.lu ? 1 : 0, dtOrNull(p.date)]
   )

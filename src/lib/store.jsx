@@ -347,14 +347,15 @@ export function StoreProvider({ children }) {
   }, [])
 
   const updateMe = useCallback(async (patch) => {
-    // Colonnes du compte utilisateur
+    // Colonnes du compte utilisateur — l'erreur serveur remonte à l'appelant
+    // (plus de succès silencieux en cas d'échec API).
     const userPatch = {}
     if ('nom' in patch) userPatch.nom = patch.nom
     if ('tel' in patch) userPatch.telephone = patch.tel
     if ('photo' in patch) userPatch.photo = patch.photo
     if ('twoFA' in patch) userPatch.two_fa = !!patch.twoFA
     if (Object.keys(userPatch).length) {
-      try { await api.updateMe(userPatch) } catch { /* ignoré */ }
+      try { await api.updateMe(userPatch) } catch (e) { return { error: traduire(e) } }
     }
     // Enregistrement membre correspondant (dans le club courant)
     const cid = clubIdRef.current
@@ -369,7 +370,7 @@ export function StoreProvider({ children }) {
         dbRef.current = nextDb
         lastSyncedRef.current = nextDb
         setDbState(nextDb)
-      } catch { /* ignoré */ }
+      } catch (e) { return { error: traduire(e) } }
     }
     setUser(u => u ? { ...u, ...patch } : u)
     return {}

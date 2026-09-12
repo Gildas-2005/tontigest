@@ -5,7 +5,7 @@ import { hashPassword } from './auth.js'
 
 /* Seed minimal : crée uniquement le compte superadministrateur.
    Aucune donnée fictive n'est insérée — tous les clubs, membres et opérations
-   sont créés par les utilisateurs depuis l'application et stockés dans MySQL. */
+   sont créés par les utilisateurs depuis l'application. */
 
 async function ensureSuperadmin() {
   if (!config.superadmin.email || !config.superadmin.password) {

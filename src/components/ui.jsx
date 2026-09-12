@@ -218,12 +218,14 @@ export function PageHeader({ title, sub, actions }) {
 }
 
 /* Avatar */
-export function Avatar({ name, size = 'md', ring }) {
+export function Avatar({ name, size = 'md', ring, photo }) {
   const s = { sm: 'h-8 w-8 text-[10px]', md: 'h-10 w-10 text-xs', lg: 'h-14 w-14 text-base', xl: 'h-20 w-20 text-xl' }[size]
   return (
-    <span className={cls('relative grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-brand-800 font-bold text-white shadow-inner', s,
+    <span className={cls('relative grid shrink-0 place-items-center overflow-hidden rounded-full bg-gradient-to-br from-brand-500 to-brand-800 font-bold text-white shadow-inner', s,
       ring && 'ring-2 ring-gold-400 ring-offset-2')}>
-      {initials(name)}
+      {photo
+        ? <img src={photo} alt={name || ''} className="h-full w-full object-cover" />
+        : initials(name)}
     </span>
   )
 }

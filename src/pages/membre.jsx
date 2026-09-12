@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore, useAuth, BUREAU_LABELS } from '../lib/store'
 import { api } from '../lib/api'
 import { PageHeader, Card, Button, Badge, Modal, Field, Input, Select, Textarea, Table, Stat, Tabs, Avatar, statusTone, EmptyState, RowItem, Progress } from '../components/ui'
@@ -9,7 +9,8 @@ import {
   Gift, Bell, CreditCard, Check, Printer, Receipt, HandCoins,
   HandHelping, Flower2, HeartHandshake, Baby, Stethoscope, Users,
   TrendingUp, Sparkles, Plus, ArrowRight, Smartphone,
-  PiggyBank, Lock, Banknote, CalendarDays,
+  PiggyBank, Lock, Banknote, CalendarDays, MessageSquare, Send,
+  Scale, TriangleAlert, CircleCheck,
 } from '../components/icons'
 
 /* Mois estimé = mois de dateDebut + offset (fréquence mensuelle) */
@@ -42,7 +43,9 @@ export function MembreHome() {
   const interets = sum(db.interetsRedistribues.flatMap(i => i.parts.filter(p => p.membreId === user.id)), p => p.montant)
   const position = db.ordrePassage.indexOf(user.id) + 1
 
-  const cotisMois = mesCotis.find(c => c.periode === monthKey() || monthKey(c.date) === monthKey())
+  /* Cotisation du mois : uniquement si la période courante est couverte
+     (l'ancien `|| monthKey(c.date)` comptait un rattrapage d'un autre mois). */
+  const cotisMois = mesCotis.find(c => c.periode === monthKey())
   const statutMois = cotisMois?.statut || null
 
   const parMois = {}
@@ -120,7 +123,7 @@ const METHODES = [
   { id: 'Carte', label: 'Carte bancaire', icon: <CreditCard size={22} className="text-white" />, grad: 'from-brand-600 to-brand-900', hint: 'Visa · Mastercard — sécurisé 3D Secure' },
 ]
 
-export function PayerPage() {
+export function PayerPage({ routeParams }) {
   const { db, reloadClub, toast } = useStore()
   const { user } = useAuth()
   const t = db.tontine
@@ -131,9 +134,43 @@ export function PayerPage() {
   const [errors, setErrors] = useState({})
   const [tx, setTx] = useState(null) // { ref, mode, paymentUrl, notice }
   const [integr, setIntegr] = useState(null)
+  const autoRef = useRef(false)
 
   /* État réel de la passerelle — affiché honnêtement. */
   useEffect(() => { api.integrations().then(setIntegr).catch(() => {}) }, [])
+
+  /* Retour de la passerelle (successUrl/errorUrl → #/payer?status=…&ref=…) :
+     auto-vérification immédiate du statut réel auprès du serveur. */
+  useEffect(() => {
+    if (autoRef.current) return
+    const status = routeParams?.status
+    const ref = routeParams?.ref
+    if (!ref || !status) return
+    autoRef.current = true
+    ;(async () => {
+      setTx((cur) => cur ?? { ref, mode: 'retour' })
+      setPhase('processing')
+      try {
+        const { transaction } = await api.paymentStatus(ref)
+        if (transaction.status === 'success') {
+          await reloadClub()
+          setPhase('success')
+          toast('Paiement confirmé par la passerelle')
+        } else if (status === 'error' || transaction.status === 'failed') {
+          setPhase('form')
+          setTx(null)
+          toast('Paiement refusé ou annulé — réessayez', 'error')
+        } else {
+          setPhase('checkout')
+          setTx({ ref, mode: 'retour' })
+          toast('Paiement encore en attente côté opérateur — cliquez sur « J\'ai payé — vérifier »', 'info')
+        }
+      } catch (e) {
+        setPhase('form')
+        toast(e.message, 'error')
+      }
+    })()
+  }, [routeParams, reloadClub, toast])
 
   const mesCotis = db.cotisations.filter(c => c.membreId === user.id).sort((a, b) => String(b.date).localeCompare(String(a.date)))
   const dejaPayeCeMois = mesCotis.some(c => c.periode === monthKey() && c.statut !== 'Rejetée')
@@ -441,24 +478,29 @@ export function CalendrierPage() {
             {db.ordrePassage.map((id, i) => {
               const m = byId(db.membres, id)
               const moi = id === user.id
-              const servi = i < 3
+              /* Tour servi = cotisation validée rattachée à ce bénéficiaire ;
+                 tour en cours = le premier non servi. Plus de i<3 hardcodé. */
+              const servi = db.cotisations.some(c => c.membreId === id && c.statut === 'Validée')
+              const toursServis = db.ordrePassage.filter(x =>
+                db.cotisations.some(c => c.membreId === x && c.statut === 'Validée')).length
+              const enCours = i === toursServis
               return (
                 <div key={id} style={{ animationDelay: `${i * 0.05}s` }}
                   className={cls('relative flex items-center gap-4 rounded-2xl border bg-white p-3 pl-4 transition-all animate-fade-up',
                     moi ? 'border-gold-400 ring-2 ring-gold-400 shadow-lg shadow-gold-500/10' : 'border-black/5 hover:border-brand-200')}>
                   <span className={cls('relative z-10 grid h-9 w-9 shrink-0 place-items-center rounded-full font-display text-sm font-bold',
-                    servi ? 'bg-brand-100 text-brand-700' : i === 3 ? 'bg-brand-950 text-gold-300' : 'bg-gold-100 text-gold-700')}>
+                    servi ? 'bg-brand-100 text-brand-700' : enCours ? 'bg-brand-950 text-gold-300' : 'bg-gold-100 text-gold-700')}>
                     {servi ? <Check size={14} /> : i + 1}
                   </span>
                   <Avatar name={m?.nom} size="sm" ring={moi} />
                   <div className="min-w-0 flex-1">
                     <p className={cls('truncate text-sm', moi ? 'font-bold' : 'font-semibold')}>{m?.nom} {moi && <span className="text-gold-600">(moi)</span>}</p>
-                    <p className="text-xs text-ink/50">{BUREAU_LABELS[m?.role]} · Tour estimé : {monthLabel(moisDe(t.dateDebut, i))}</p>
+                    <p className="text-xs text-ink/50">{m ? `${BUREAU_LABELS[m.role]} · ` : ''}{t.dateDebut ? `Tour estimé : ${monthLabel(moisDe(t.dateDebut, i))}` : 'Date de début non définie'}</p>
                   </div>
                   {moi && <Badge tone="gold" dot>Mon tour</Badge>}
                   {servi && <Badge tone="green">Tour servi</Badge>}
-                  {!servi && !moi && i === 3 && <Badge tone="brand" dot>Tour en cours</Badge>}
-                  {!servi && !moi && i !== 3 && <Badge tone="gray">À venir</Badge>}
+                  {!servi && !moi && enCours && <Badge tone="brand" dot>Tour en cours</Badge>}
+                  {!servi && !moi && !enCours && <Badge tone="gray">À venir</Badge>}
                 </div>
               )
             })}
@@ -749,6 +791,111 @@ export function EpargneMembrePage() {
             </div>
           </Card>
         </div>
+      )}
+    </div>
+  )
+}
+
+/* ============================ MES RÉCLAMATIONS ============================ */
+/* Point d'entrée membre du module réclamations (avant : à sens unique,
+   seul le secrétaire pouvait répondre à des réclamations jamais créables). */
+export function ReclamationsMembrePage() {
+  const { db, setDb, toast } = useStore()
+  const { user } = useAuth()
+  const [open, setOpen] = useState(false)
+  const [form, setForm] = useState({ sujet: '', detail: '' })
+
+  const mesReclamations = db.reclamations
+    .filter(r => r.membreId === user.id)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+
+  const envoyer = () => {
+    if (!form.sujet.trim()) return toast('Le sujet est obligatoire', 'error')
+    if (!form.detail.trim()) return toast('Décrivez votre réclamation', 'error')
+    setDb(d => ({
+      ...d,
+      reclamations: [...d.reclamations, {
+        id: uid('rec'), membreId: user.id, sujet: form.sujet.trim(),
+        detail: form.detail.trim(), statut: 'Ouverte', reponse: '', date: today(),
+      }],
+      /* Notifier le secrétaire : toutes les notifications club passent par
+         db.notifications (entity 'notifications'). */
+      notifications: [...d.notifications, ...d.membres
+        .filter(m => m.role === 'Secretaire')
+        .map(m => ({ id: uid('nt'), pour: m.id, titre: 'Nouvelle réclamation', message: `${byId(d.membres, user.id)?.nom || 'Un membre'} a déposé une réclamation : « ${form.sujet.trim()} »`, lu: false, date: now() }))],
+    }))
+    setForm({ sujet: '', detail: '' })
+    setOpen(false)
+    toast('Réclamation transmise au secrétaire')
+  }
+
+  return (
+    <div className="space-y-5">
+      <PageHeader title="Mes réclamations" sub="Soumettez vos doléances au bureau — le secrétaire vous répond."
+        actions={<Button variant="gold" icon={<MessageSquare size={16} />} onClick={() => setOpen(true)}>Nouvelle réclamation</Button>} />
+
+      <Card pad={false}>
+        <Table empty="Aucune réclamation — n'hésitez pas à en soumettre une" rows={mesReclamations} columns={[
+          { key: 'date', label: 'Date', render: r => fmtDate(r.date) },
+          { key: 'sujet', label: 'Sujet', render: r => <span className="font-semibold">{r.sujet}</span> },
+          { key: 'statut', label: 'Statut', render: r => <Badge tone={statusTone(r.statut)}>{r.statut}</Badge> },
+          { key: 'reponse', label: 'Réponse du secrétariat', render: r => r.reponse
+            ? <span className="text-ink/70">{r.reponse}</span>
+            : <span className="text-xs text-ink/40">En attente de réponse…</span> },
+        ]} />
+      </Card>
+
+      <Modal open={open} onClose={() => setOpen(false)} title="Nouvelle réclamation" subtitle="Votre message sera transmis au secrétaire du club"
+        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Annuler</Button><Button variant="gold" onClick={envoyer} icon={<Send size={16} />}>Envoyer</Button></>}>
+        <div className="space-y-4">
+          <Field label="Sujet" required><Input value={form.sujet} onChange={e => setForm(f => ({ ...f, sujet: e.target.value }))} placeholder="Ex : Erreur sur mon reçu de cotisation" /></Field>
+          <Field label="Détail" required hint="Décrivez précisément votre demande — le secrétaire pourra vous répondre.">
+            <Textarea rows={5} value={form.detail} onChange={e => setForm(f => ({ ...f, detail: e.target.value }))} placeholder="Votre réclamation…" />
+          </Field>
+        </div>
+      </Modal>
+    </div>
+  )
+}
+
+/* ============================ MES PÉNALITÉS & SANCTIONS ============================ */
+/* Le membre voit désormais ses pénalités impayées et sanctions reçues. */
+export function PenalitesMembrePage() {
+  const { db } = useStore()
+  const { user } = useAuth()
+
+  const mesPenalites = db.penalites.filter(p => p.membreId === user.id).sort((a, b) => String(b.date).localeCompare(String(a.date)))
+  const mesSanctions = db.sanctions.filter(s => s.membreId === user.id).sort((a, b) => String(b.date).localeCompare(String(a.date)))
+  const impayees = mesPenalites.filter(p => !p.payee)
+  const totalDu = sum(impayees, p => p.montant)
+
+  return (
+    <div className="space-y-5">
+      <PageHeader title="Mes pénalités & sanctions" sub="Suivi de vos pénalités de retard et sanctions disciplinaires." />
+
+      <div className="grid gap-4 sm:grid-cols-3 stagger">
+        <Stat label="Pénalités impayées" value={fmtXAF(totalDu)} sub={`${impayees.length} pénalité(s)`} icon={<TriangleAlert size={18} />} tone={totalDu > 0 ? 'red' : 'brand'} />
+        <Stat label="Pénalités réglées" value={fmtXAF(sum(mesPenalites, p => p.payee ? p.montant : 0))} sub={`${mesPenalites.filter(p => p.payee).length} réglée(s)`} icon={<CircleCheck size={18} />} tone="brand" />
+        <Stat label="Sanctions reçues" value={String(mesSanctions.length)} sub="Historique disciplinaire" icon={<Scale size={18} />} tone="gold" />
+      </div>
+
+      <Card title="Historique des pénalités" subtitle="Pénalités de retard appliquées par le trésorier" pad={false}>
+        <Table empty="Aucune pénalité — votre situation est à jour ✅" rows={mesPenalites} columns={[
+          { key: 'date', label: 'Date', render: p => fmtDate(p.date) },
+          { key: 'motif', label: 'Motif', render: p => <span className="text-ink/60">{p.motif}</span> },
+          { key: 'montant', label: 'Montant', render: p => <span className="font-bold">{fmtXAF(p.montant)}</span> },
+          { key: 'payee', label: 'Statut', render: p => p.payee ? <Badge tone="green">Payée</Badge> : <Badge tone="amber" dot>Impayée</Badge> },
+        ]} />
+      </Card>
+
+      {mesSanctions.length > 0 && (
+        <Card title="Sanctions reçues" subtitle="Décisions disciplinaires du bureau" pad={false}>
+          <Table rows={mesSanctions} columns={[
+            { key: 'date', label: 'Date', render: s => fmtDate(s.date) },
+            { key: 'type', label: 'Type', render: s => <Badge tone={statusTone(s.type)}>{s.type}</Badge> },
+            { key: 'motif', label: 'Motif', render: s => <span className="text-ink/60">{s.motif}</span> },
+          ]} />
+        </Card>
       )}
     </div>
   )

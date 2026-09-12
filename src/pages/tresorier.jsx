@@ -720,7 +720,36 @@ export function EpargnePage() {
   const [montant, setMontant] = useState('')
   const [newGroup, setNewGroup] = useState(false)
   const [gForm, setGForm] = useState({ nom: '', objectif: 500000, membres: [] })
+  const [openCompte, setOpenCompte] = useState(false)
   const ep = Object.fromEntries(db.epargneIndividuelle.map(e => [e.membreId, e]))
+
+  /* Membres actifs sans compte d'épargne — ouverture possible par le trésorier. */
+  const sansCompte = db.membres.filter(m => m.statut === 'Actif' && !ep[m.id])
+
+  const creerCompte = (membreId) => {
+    const membre = db.membres.find(m => m.id === membreId)
+    if (!membre) return
+    setDb(d => ({
+      ...d,
+      epargneIndividuelle: [...d.epargneIndividuelle, { id: uid('ep'), membreId, type: 'Volontaire', solde: 0, bloquee: 0, versements: [] }],
+      notifications: notify(d, membreId, 'Compte d\'épargne ouvert', `Le trésorier a ouvert un compte d'épargne pour vous. Vous pouvez y effectuer des versements volontaires.`),
+    }))
+    setOpenCompte(false)
+    toast(`Compte d'épargne ouvert pour ${membre.nom}`)
+  }
+
+  /* Versement vers un groupe d'épargne — crédite le solde du groupe (T5). */
+  const versementGroupe = (groupeId, m) => {
+    const g = db.groupesEpargne.find(x => x.id === groupeId)
+    if (!g || !m || m <= 0) return
+    setDb(d => ({
+      ...d,
+      groupesEpargne: d.groupesEpargne.map(x => x.id === groupeId ? { ...x, solde: (x.solde || 0) + m } : x),
+      caisse: { ...d.caisse, XAF: { ...d.caisse.XAF, 'Épargne': (d.caisse.XAF['Épargne'] || 0) + m } },
+      mouvements: [...d.mouvements, { id: uid('mv'), type: 'Epargne groupe', sens: 'in', compte: 'Épargne', montant: m, devise: 'XAF', date: today(), note: `Versement au groupe ${g.nom}` }],
+    }))
+    toast(`Versement de ${fmtXAF(m)} au groupe ${g.nom}`)
+  }
 
   const enregistrerVersement = () => {
     const m = +montant
@@ -752,7 +781,7 @@ export function EpargnePage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Épargne" sub="Épargne individuelle, groupes solidaires et versements volontaires."
-        actions={tab === 'groupes' && <Button icon={<Plus size={16} />} onClick={() => setNewGroup(true)}>Nouveau groupe</Button>} />
+        actions={tab === 'individuelle' && sansCompte.length > 0 && <Button variant="gold" icon={<Plus size={16} />} onClick={() => setOpenCompte(true)}>Ouvrir un compte</Button>} />
       <Tabs active={tab} onChange={setTab} tabs={[
         { id: 'individuelle', label: 'Individuelle' },
         { id: 'groupes', label: `Groupes (${db.groupesEpargne.length})` },
@@ -763,11 +792,12 @@ export function EpargnePage() {
         <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-3 stagger">
             <Stat label="Épargne totale" value={fmtXAF(totalEpargne)} sub={`${db.epargneIndividuelle.length} épargnant(s)`} icon={<PiggyBank size={18} />} tone="gold" />
-            <Stat label="Part bloquée" value={fmtXAF(sum(db.epargneIndividuelle, e => e.bloquee))} sub="Non retirable avant éch éance" icon={<Lock size={18} />} tone="brand" />
+            <Stat label="Part bloquée" value={fmtXAF(sum(db.epargneIndividuelle, e => e.bloquee))} sub="Non retirable avant échéance" icon={<Lock size={18} />} tone="brand" />
             <Stat label="Part volontaire" value={fmtXAF(sum(db.epargneIndividuelle, e => e.solde - e.bloquee))} sub="Disponible sur demande" icon={<LockOpen size={18} />} tone="brand" />
           </div>
-          <Card title="Comptes d'épargne individuelle" subtitle="Chaque membre dispose d'un compte d'épargne" pad={false}>
-            <Table empty="Aucun compte d'épargne" rows={db.epargneIndividuelle} keyField="membreId" columns={[
+          <Card title="Comptes d'épargne individuelle" subtitle="Chaque membre dispose d'un compte d'épargne" pad={false}
+            actions={sansCompte.length > 0 && <Button size="sm" variant="outline" icon={<Plus size={14} />} onClick={() => setOpenCompte(true)}>Ouvrir un compte</Button>}>
+            <Table empty="Aucun compte d'épargne — ouvrez-en un pour un membre actif" rows={db.epargneIndividuelle} keyField="membreId" columns={[
               { key: 'membre', label: 'Membre', render: e => <span className="flex items-center gap-2"><Avatar name={byId(db.membres, e.membreId)?.nom || '?'} size="sm" /><span className="font-semibold">{byId(db.membres, e.membreId)?.nom || '—'}</span></span> },
               { key: 'solde', label: 'Solde', render: e => <span className="font-bold">{fmtXAF(e.solde)}</span> },
               { key: 'bloquee', label: 'Part bloquée', render: e => fmtXAF(e.bloquee) },
@@ -783,7 +813,11 @@ export function EpargnePage() {
         <div className="grid gap-5 lg:grid-cols-2 stagger">
           {db.groupesEpargne.length === 0 && <div className="lg:col-span-2"><EmptyState icon={<Users size={16} />} title="Aucun groupe d'épargne" sub="Créez le premier groupe solidaire du club." action={<Button onClick={() => setNewGroup(true)}>Créer un groupe</Button>} /></div>}
           {db.groupesEpargne.map(g => (
-            <Card key={g.id} title={g.nom} subtitle={`${g.membres.length} membre(s) · objectif ${fmtXAF(g.objectif)}`}>
+            <Card key={g.id} title={g.nom} subtitle={`${g.membres.length} membre(s) · objectif ${fmtXAF(g.objectif)}`}
+              actions={<Button size="sm" variant="outline" icon={<Plus size={14} />} onClick={() => {
+                const m = window.prompt(`Versement au groupe ${g.nom} (XAF)`)
+                if (m) versementGroupe(g.id, +m)
+              }}>Versement</Button>}>
               <div className="flex items-center gap-2">
                 {g.membres.slice(0, 6).map(id => <Avatar key={id} name={byId(db.membres, id)?.nom || '?'} size="sm" />)}
                 {g.membres.length > 6 && <span className="text-xs text-ink/40">+{g.membres.length - 6}</span>}
@@ -832,6 +866,29 @@ export function EpargnePage() {
           </Field>
         </div>
       </Modal>
+
+      {/* Ouverture d'un compte d'épargne pour un membre actif qui n'en a pas. */}
+      <Modal open={openCompte} onClose={() => setOpenCompte(false)} title="Ouvrir un compte d'épargne" subtitle={`${sansCompte.length} membre(s) actif(s) sans compte`}>
+        {sansCompte.length === 0 ? (
+          <p className="text-sm text-ink/60">Tous les membres actifs disposent déjà d'un compte d'épargne.</p>
+        ) : (
+          <ul className="max-h-72 space-y-1 overflow-y-auto">
+            {sansCompte.map(m => (
+              <li key={m.id}>
+                <button onClick={() => creerCompte(m.id)}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-brand-50 cursor-pointer">
+                  <Avatar name={m.nom} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-semibold text-ink">{m.nom}</p>
+                    <p className="text-[11px] text-ink/45">{m.role}</p>
+                  </div>
+                  <span className="text-xs font-bold text-brand-700">Ouvrir →</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Modal>
     </div>
   )
 }
@@ -872,7 +929,9 @@ export function PretsPage() {
       prets: d.prets.map(x => x.id === remb.id ? { ...x, reste: Math.max(0, solde), statut: solde <= 0 ? 'Remboursé' : 'En cours' } : x),
       caisse: { ...d.caisse, XAF: { ...d.caisse.XAF, Cotisation: (d.caisse.XAF.Cotisation || 0) + m } },
       mouvements: [...d.mouvements, { id: uid('mv'), type: 'Remboursement', sens: 'in', compte: 'Cotisation', montant: m, devise: 'XAF', date: today(), note: `Remboursement prêt${solde <= 0 ? ' — soldé' : ` — reste ${fmtNum(solde)}`}`, membreId: remb.membreId }],
-      notifications: solde <= 0 ? notify(d, remb.membreId, 'Prêt soldé', `Votre prêt de ${fmtXAF(remb.montant)} est entièrement remboursé. Félicitations !`) : [],
+      notifications: solde <= 0
+        ? notify(d, remb.membreId, 'Prêt soldé', `Votre prêt de ${fmtXAF(remb.montant)} est entièrement remboursé. Félicitations !`)
+        : notify(d, remb.membreId, 'Remboursement enregistré', `Un remboursement de ${fmtXAF(m)} a été enregistré pour votre prêt — reste à payer : ${fmtXAF(solde)}.`),
     }))
     setRemb(null); setMontant('')
     toast(solde <= 0 ? `Prêt de ${membres[remb.membreId]?.nom || '—'} entièrement remboursé` : `Remboursement de ${fmtXAF(m)} enregistré — reste ${fmtXAF(solde)}`)
@@ -975,6 +1034,8 @@ export function InteretsPage() {
       const te = sum(d.epargneIndividuelle, e => e.solde)
       const dispo = Math.max(0, sum(d.prets.filter(p => p.statut === 'Remboursé'), p => p.interet ?? 0) - sum(d.interetsRedistribues, r => r.total))
       const parts = d.epargneIndividuelle.map(e => ({ membreId: e.membreId, montant: Math.round((e.solde / te) * dispo) }))
+      /* Notifications AJOUTÉES aux existantes (l'ancien code écrasait tout). */
+      const nouvelles = d.epargneIndividuelle.filter(e => e.solde > 0).map(e => ({ id: uid('nt'), pour: e.membreId, titre: 'Intérêts redistribués', message: `Votre part des intérêts de la tontine a été créditée sur votre épargne : ${fmtXAF(Math.round((e.solde / te) * dispo))}.`, lu: false, date: now() }))
       return {
         ...d,
         interetsRedistribues: [...d.interetsRedistribues, { id: uid('ir'), total: dispo, date: today(), parts }],
@@ -982,8 +1043,11 @@ export function InteretsPage() {
           const part = parts.find(pa => pa.membreId === e.membreId)
           return part && e.solde > 0 ? { ...e, solde: e.solde + part.montant } : e
         }),
-        mouvements: [...d.mouvements, { id: uid('mv'), type: 'Redistribution intérêts', sens: 'out', compte: 'Cotisation', montant: dispo, devise: 'XAF', date: today(), note: `Redistribution de ${fmtXAF(dispo)} d'intérêts au prorata de l'épargne` }],
-        notifications: d.epargneIndividuelle.filter(e => e.solde > 0).map(e => ({ id: uid('nt'), pour: e.membreId, titre: 'Intérêts redistribués', message: `Votre part des intérêts de la tontine a été créditée sur votre épargne : ${fmtXAF(Math.round((e.solde / te) * dispo))}.`, lu: false, date: now() })),
+        /* Les intérêts redistribués sortent réellement de la caisse Cotisation
+           vers l'épargne des membres (cohérence caisse ↔ épargne). */
+        caisse: { ...d.caisse, XAF: { ...d.caisse.XAF, Cotisation: Math.max(0, (d.caisse.XAF?.Cotisation || 0) - dispo), 'Épargne': (d.caisse.XAF?.['Épargne'] || 0) + dispo } },
+        mouvements: [...d.mouvements, { id: uid('mv'), type: 'Redistribution intérêts', sens: 'out', compte: 'Cotisation', montant: dispo, devise: 'XAF', date: today(), note: `Redistribution de ${fmtXAF(dispo)} d'intérêts vers l'épargne des membres` }, { id: uid('mv'), type: 'Redistribution intérêts', sens: 'in', compte: 'Épargne', montant: dispo, devise: 'XAF', date: today(), note: `Intérêts redistribués au prorata de l'épargne de ${parts.length} membre(s)` }],
+        notifications: [...d.notifications, ...nouvelles],
       }
     })
     toast(`${fmtXAF(disponible)} d'intérêts redistribués aux épargnants`)

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { config } from './config.js'
-import { bootstrapDatabase, countUsers } from './db.js'
+import { bootstrapDatabase, countUsers, dbClient } from './db.js'
 import { seed } from './seed.js'
 import { migrateRecordsToRelational } from './migrate.js'
 import apiRoutes from './routes.js'
@@ -49,7 +49,7 @@ async function main() {
 
   app.listen(config.port, () => {
     console.log(`✔ Serveur TontiGest prêt sur http://localhost:${config.port}`)
-    console.log(`  MySQL : ${config.db.user}@${config.db.host}:${config.db.port}/${config.db.database}`)
+    console.log(`  Base ${dbClient === 'pg' ? 'PostgreSQL' : 'MySQL'} : ${dbClient === 'pg' && config.db.url ? 'DATABASE_URL' : `${config.db.user}@${config.db.host}:${config.db.port}/${config.db.name}`}`)
   })
 }
 

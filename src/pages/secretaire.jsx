@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { api } from '../lib/api'
 import { useStore, useAuth } from '../lib/store'
 import { PageHeader, Card, Button, Badge, Modal, Field, Input, Select, Textarea, Stat, Tabs, Avatar, statusTone, EmptyState, RowItem } from '../components/ui'
 import { fmtDate, fmtDateTime, today, now, uid, byId, pct, daysBetween, runValidators, vRequired } from '../lib/utils'
@@ -140,9 +141,25 @@ export function SeancesPage() {
   const togglePresence = (mid) => {
     setDb(d => ({ ...d, seances: d.seances.map(x => x.id === cible.id ? { ...x, presences: { ...x.presences, [mid]: !x.presences?.[mid] } } : x) }))
   }
+  /* Validation réelle de l'appel : trace (convocations) + notification aux absents. */
   const validerAppel = () => {
     if (!cible) return
-    toast(`Appel validé — ${presents} présent(s), ${absents} absent(s) pour « ${cible.titre} »`)
+    const absentsList = db.membres.filter(m => !cible.presences?.[m.id])
+    setDb(d => ({
+      ...d,
+      convocations: [...d.convocations, {
+        id: uid('cv'), seanceId: cible.id, canal: 'Appel validé',
+        message: `Appel de la séance « ${cible.titre} » : ${presents} présent(s), ${absents} absent(s)`,
+        envoyees: presents, date: now(),
+      }],
+      seances: d.seances.map(x => x.id === cible.id ? { ...x, statut: x.statut === 'Planifiée' ? 'Terminée' : x.statut, presences: x.id === cible.id && Object.keys(x.presences || {}).length === 0 ? Object.fromEntries(d.membres.map(m => [m.id, false])) : x.presences } : x),
+      notifications: [...d.notifications, ...absentsList.map(m => ({
+        id: uid('nt'), pour: m.id, titre: 'Absence constatée',
+        message: `Votre absence à la séance « ${cible.titre} » du ${fmtDate(cible.date)} a été enregistrée au procès-verbal.`,
+        lu: false, date: now(),
+      }))],
+    }))
+    toast(`Appel validé et archivé — ${presents} présent(s), ${absents} absent(s)`)
   }
 
   /* --- PV & listes --- */
@@ -316,7 +333,8 @@ export function SeancesPage() {
 /* ============================ CONVOCATIONS ============================ */
 export function ConvocationsPage() {
   const { db, setDb, toast } = useStore()
-  const [form, setForm] = useState({ seanceId: '', canal: 'WhatsApp', message: '' })
+  const [form, setForm] = useState({ seanceId: '', canal: 'In-app + email', message: '' })
+  const [sending, setSending] = useState(false)
   const planifiees = db.seances.filter(s => s.statut === 'Planifiée').sort((a, b) => a.date.localeCompare(b.date))
   const actifs = db.membres.filter(m => m.statut === 'Actif')
   const historique = db.convocations || []
@@ -328,22 +346,40 @@ export function ConvocationsPage() {
       message: s ? `Bonjour, la prochaine séance du club ${db.tontine.nom} (« ${s.titre} ») aura lieu le ${fmtDate(s.date)} à ${s.lieu}. Votre présence est vivement souhaitée. — Le Secrétariat` : f.message,
     }))
   }
-  const envoyer = () => {
+  const envoyer = async () => {
     if (!form.seanceId) return toast('Sélectionnez d\'abord une séance', 'error')
     if (form.message.trim().length < 5) return toast('Le message de convocation est trop court', 'error')
     const seance = byId(db.seances, form.seanceId)
+    setSending(true)
+
+    /* 1. Notification in-app — toujours créée. */
     setDb(d => ({
       ...d,
       convocations: [{ id: uid('cv'), seanceId: form.seanceId, canal: form.canal, message: form.message, date: now(), envoyees: actifs.length }, ...(d.convocations || [])],
       notifications: [...d.notifications, ...actifs.map(m => ({ id: uid('nt'), pour: m.id, titre: 'Convocation à la séance', message: form.message, lu: false, date: now() }))],
     }))
-    setForm({ seanceId: '', canal: 'WhatsApp', message: '' })
-    toast(`${actifs.length} convocations envoyées via ${form.canal} pour « ${seance?.titre} »`)
+
+    /* 2. Relais email/SMS via le serveur (notify.js) si configuré. */
+    let relais = { email: 0, sms: 0 }
+    try {
+      const results = await Promise.allSettled(actifs.map(m =>
+        api.notifyExternal({ email: m.email || null, tel: m.tel || null, titre: 'Convocation à une séance', message: form.message })))
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value?.channels) {
+          if (r.value.channels.email) relais.email++
+          if (r.value.channels.sms) relais.sms++
+        }
+      }
+    } catch { /* relais best-effort */ }
+
+    setSending(false)
+    setForm({ seanceId: '', canal: 'In-app + email', message: '' })
+    toast(`${actifs.length} convocation(s) in-app envoyée(s)` + (relais.email || relais.sms ? ` + relais externe (${relais.email} email(s), ${relais.sms} SMS)` : '') + ` pour « ${seance?.titre} »`)
   }
 
   return (
     <div>
-      <PageHeader title="Convocations" sub="Convoquez les membres actifs à la prochaine séance par WhatsApp ou SMS." />
+      <PageHeader title="Convocations" sub="Convoquez les membres actifs à la prochaine séance — in-app toujours, email/SMS en relais si configurés." />
       <div className="grid gap-5 lg:grid-cols-5 stagger">
         <Card title="Composer la convocation" className="lg:col-span-2">
           <div className="space-y-4">
@@ -351,12 +387,14 @@ export function ConvocationsPage() {
               <option value="">— Choisir une séance —</option>
               {planifiees.map(s => <option key={s.id} value={s.id}>{s.titre} — {fmtDate(s.date)}</option>)}
             </Select></Field>
-            <Field label="Canal d'envoi"><Select value={form.canal} onChange={e => setForm(f => ({ ...f, canal: e.target.value }))} options={['WhatsApp', 'SMS']} /></Field>
+            <Field label="Relais externe" hint="L'in-app est toujours envoyée ; l'email/SMS part si les passerelles serveur sont configurées.">
+              <Select value={form.canal} onChange={e => setForm(f => ({ ...f, canal: e.target.value }))} options={['In-app + email', 'In-app + SMS']} />
+            </Field>
             <Field label="Message" hint={`${form.message.length} caractères · destinataires : ${actifs.length} membre(s) actif(s)`}>
               <Textarea className="min-h-32" value={form.message} onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
                 placeholder="Le message est pré-rempli dès que vous choisissez une séance…" />
             </Field>
-            <Button variant="gold" className="w-full" icon={<Send size={16} />} onClick={envoyer}>Envoyer les convocations</Button>
+            <Button variant="gold" className="w-full" icon={<Send size={16} />} onClick={envoyer} disabled={sending}>{sending ? 'Envoi…' : 'Envoyer les convocations'}</Button>
           </div>
         </Card>
         <Card title="Historique des envois" subtitle="Convocations déjà diffusées" className="lg:col-span-3" pad={false}>
@@ -365,7 +403,7 @@ export function ConvocationsPage() {
             {historique.map(c => {
               const s = byId(db.seances, c.seanceId)
               return (
-                <RowItem key={c.id} icon={c.canal === 'WhatsApp' ? <MessageSquare size={16} className="text-brand-600" /> : <Mail size={16} className="text-amber-600" />} title={s ? s.titre : 'Séance supprimée'}
+                <RowItem key={c.id} icon={c.canal === 'In-app + SMS' ? <MessageSquare size={16} className="text-brand-600" /> : <Mail size={16} className="text-amber-600" />} title={s ? s.titre : 'Séance supprimée'}
                   sub={`${c.canal} · ${c.envoyees} destinataire(s) · ${fmtDateTime(c.date)}`}
                   right={<Badge tone="green">Envoyée</Badge>} />
               )

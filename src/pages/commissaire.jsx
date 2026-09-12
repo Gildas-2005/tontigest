@@ -258,9 +258,14 @@ export function FraudePage() {
     setDb(d => ({
       ...d,
       alertes: [{ id: uid('al'), de: user.nom, type: form.type, message: form.message, statut: 'Nouvelle', date: today() }, ...d.alertes],
+      /* Notification réelle au président (et au trésorier pour une fraude
+         financière) — plus d'alerte invisible jusqu'à la reconnexion. */
+      notifications: [...d.notifications, ...d.membres
+        .filter(m => m.role === 'President' || (form.type === 'Fraude' && m.role === 'Tresorier'))
+        .map(m => ({ id: uid('nt'), pour: m.id, titre: `${form.type} signalée`, message: `Le commissaire a signalé : « ${form.message} »`, lu: false, date: now() }))],
     }))
     setForm({ type: 'Anomalie', message: '' })
-    toast('Le président a été alerté', form.type === 'Fraude' ? 'error' : 'info')
+    toast(form.type === 'Fraude' ? 'Fraude signalée — président et trésorier notifiés' : 'Anomalie signalée au président', form.type === 'Fraude' ? 'error' : 'info')
   }
 
   return (

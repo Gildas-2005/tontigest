@@ -1,13 +1,13 @@
 import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
-import { q } from './db.js'
+import { q, upsertSql } from './db.js'
 import {
   hashPassword, verifyPassword, signToken, publicUser,
   requireAuth, requireSuper, genCode,
 } from './auth.js'
 import { PROJECTORS, deleteProjected, projectClub } from './relational.js'
 import { initiatePayment, checkPayment, handleGeniuspayNotify, simulateSuccess } from './payments.js'
-import { sendTwoFactorCode, notifyExternal } from './notify.js'
+import { sendTwoFactorCode, notifyExternal, emailWelcome, emailNewMessage } from './notify.js'
 import { integrationsStatus, geniuspay } from './config.js'
 
 export const ENTITIES = [
@@ -31,6 +31,30 @@ function canAccessClub(user, clubId) {
   return !!user.is_superadmin || user.club_id === clubId
 }
 
+/* RBAC serveur : chaque entité a un rôle minimal requis pour l'écriture.
+   Avant, seule l'appartenance au club était vérifiée — la séparation des
+   rôles n'existait que dans l'UI. Le superadmin passe partout. */
+const WRITE_ROLES = {
+  members: 'President', ordre: 'President', clubs: 'President',
+  cotisations: 'Tresorier', mouvements: 'Tresorier', penalites: 'Tresorier',
+  epargne: 'Tresorier', groupes_epargne: 'Tresorier',
+  prets: 'Tresorier', redistributions: 'Tresorier', aides: 'Tresorier',
+  seances: 'Secretaire', convocations: 'Secretaire', notifications: 'Secretaire',
+  parrainages: 'Secretaire', reclamations: 'Membre',
+  sanctions: 'President', rapports: 'Commissaire', alertes: 'Commissaire',
+  audits: 'Commissaire', annonces: 'President',
+}
+
+/* Hiérarchie de rôles : chacun peut écrire ce que les rôles inférieurs peuvent. */
+const ROLE_RANK = { Membre: 0, Secretaire: 1, Tresorier: 2, Commissaire: 2, President: 3, SuperAdmin: 4 }
+
+function canWriteEntity(user, entity) {
+  if (user.is_superadmin) return true
+  const minRole = WRITE_ROLES[entity]
+  if (!minRole) return true // entités libres (notifications personnelles…)
+  return (ROLE_RANK[user.role] ?? 0) >= (ROLE_RANK[minRole] ?? 99)
+}
+
 const router = Router()
 
 /* ============================ AUTH ============================ */
@@ -49,6 +73,8 @@ router.post('/auth/signup', async (req, res) => {
   )
   const [rows] = await q('SELECT * FROM users WHERE id = ?', [id])
   const user = rows[0]
+  /* Email de bienvenue automatique (ignoré silencieusement si Mailjet absent). */
+  emailWelcome({ email: user.email, nom: user.nom }).catch(() => {})
   res.json({ token: signToken(user), user: publicUser(user) })
 })
 
@@ -160,6 +186,37 @@ router.post('/users/me/onboarding', requireAuth, async (req, res) => {
   res.json({ ok: true })
 })
 
+/* ---- Activation 2FA réelle (plus de simulation côté client) ----
+   1. POST /users/me/2fa/request : génère un code serveur, l'envoie par
+      SMS (Twilio) ou email (Mailjet) ; en mode simulation (aucun canal),
+      le code est retourné pour affichage honnête.
+   2. POST /users/me/2fa/confirm : vérifie le code ; seul un code correct
+      active two_fa sur le compte. */
+router.post('/users/me/2fa/request', requireAuth, async (req, res) => {
+  if (req.user.two_fa) return res.status(400).json({ error: 'La double authentification est déjà activée.' })
+  const code = genCode()
+  await q('UPDATE users SET two_fa_code = ? WHERE id = ?', [code, req.user.id])
+  const { channels } = await sendTwoFactorCode({ email: req.user.email, tel: req.user.telephone, nom: req.user.nom, code })
+  const delivered = channels.length > 0
+  res.json({
+    sent: true,
+    // En mode simulation uniquement, le code est retourné pour affichage honnête.
+    code: delivered ? undefined : code,
+    channel: delivered ? channels[0] : 'simulation',
+  })
+})
+
+router.post('/users/me/2fa/confirm', requireAuth, async (req, res) => {
+  const { code } = req.body || {}
+  const [rows] = await q('SELECT two_fa_code FROM users WHERE id = ?', [req.user.id])
+  if (!rows.length) return res.status(404).json({ error: 'Compte introuvable.' })
+  if (!rows[0].two_fa_code || rows[0].two_fa_code !== String(code)) {
+    return res.status(400).json({ error: 'Code de vérification incorrect.' })
+  }
+  await q('UPDATE users SET two_fa = 1, two_fa_code = NULL WHERE id = ?', [req.user.id])
+  res.json({ ok: true })
+})
+
 /* ============================ CLUBS ============================ */
 
 router.post('/clubs', requireAuth, async (req, res) => {
@@ -264,12 +321,19 @@ router.post('/clubs/:id/records/:entity', requireAuth, async (req, res) => {
   const { id, entity } = req.params
   if (!canAccessClub(req.user, id)) return res.status(403).json({ error: 'Accès refusé à ce club.' })
   if (!ENTITIES.includes(entity)) return res.status(400).json({ error: 'Entité inconnue.' })
+  if (!canWriteEntity(req.user, entity)) {
+    return res.status(403).json({ error: 'Votre rôle ne permet pas cette action.' })
+  }
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : []
   for (const row of rows) {
     if (!row?.id) continue
     await q(
-      `INSERT INTO records (entity, id, club_id, user_id, payload) VALUES (?,?,?,?,?)
-       ON DUPLICATE KEY UPDATE club_id = VALUES(club_id), user_id = VALUES(user_id), payload = VALUES(payload)`,
+      upsertSql({
+        table: 'records',
+        cols: ['entity', 'id', 'club_id', 'user_id', 'payload'],
+        key: ['entity', 'id'],
+        updateCols: ['club_id', 'user_id', 'payload'],
+      }),
       [entity, row.id, id, row.user_id || null, JSON.stringify(row.payload ?? {})]
     )
     // Propager le rôle du membre vers son compte (nomination au bureau).
@@ -291,12 +355,159 @@ router.post('/clubs/:id/records/:entity/delete', requireAuth, async (req, res) =
   const { id, entity } = req.params
   if (!canAccessClub(req.user, id)) return res.status(403).json({ error: 'Accès refusé à ce club.' })
   if (!ENTITIES.includes(entity)) return res.status(400).json({ error: 'Entité inconnue.' })
+  if (!canWriteEntity(req.user, entity)) {
+    return res.status(403).json({ error: 'Votre rôle ne permet pas cette action.' })
+  }
   const ids = Array.isArray(req.body?.ids) ? req.body.ids : []
   if (!ids.length) return res.json({ ok: true })
   const placeholders = ids.map(() => '?').join(',')
   await q(`DELETE FROM records WHERE entity = ? AND club_id = ? AND id IN (${placeholders})`, [entity, id, ...ids])
   try { await deleteProjected(entity, id, ids) } catch { /* best-effort */ }
   res.json({ ok: true })
+})
+
+/* ============================ MESSAGERIE INTERNE ============================ */
+/* Conversations et messages entre membres d'un même club. Les tables
+   conversations / conversation_participants / messages sont créées au
+   bootstrap (db.js EXTRA_TABLES). */
+
+/* Liste des conversations de l'utilisateur courant (club courant). */
+router.get('/messages/conversations', requireAuth, async (req, res) => {
+  if (!req.user.club_id) return res.json({ conversations: [] })
+  const [rows] = await q(
+    `SELECT c.id, c.club_id, c.sujet, c.created_at, c.updated_at,
+            (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count,
+            (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id
+              AND m.created_at > COALESCE(cp.last_read_at, to_timestamp(0))) AS unread
+     FROM conversations c
+     JOIN conversation_participants cp ON cp.conversation_id = c.id AND cp.user_id = ?
+     WHERE c.club_id = ?
+     ORDER BY c.updated_at DESC`,
+    [req.user.id, req.user.club_id]
+  )
+  res.json({ conversations: rows })
+})
+
+/* Liste des membres du club avec qui ouvrir une conversation. */
+router.get('/messages/contacts', requireAuth, async (req, res) => {
+  if (!req.user.club_id) return res.json({ contacts: [] })
+  const [rows] = await q(
+    `SELECT DISTINCT u.id, u.nom, u.email, u.role
+     FROM users u
+     WHERE u.club_id = ? AND u.id != ? AND u.statut = 'Actif'
+     ORDER BY u.nom`,
+    [req.user.club_id, req.user.id]
+  )
+  res.json({ contacts: rows })
+})
+
+/* Ouvrir (ou réutiliser) une conversation directe avec un membre du club. */
+router.post('/messages/conversations', requireAuth, async (req, res) => {
+  const { contactId } = req.body || {}
+  if (!req.user.club_id) return res.status(400).json({ error: 'Aucun club associé à votre compte.' })
+  if (!contactId) return res.status(400).json({ error: 'Destinataire manquant.' })
+  if (contactId === req.user.id) return res.status(400).json({ error: 'Impossible de s\'écrire à soi-même.' })
+  const [contactRows] = await q('SELECT id, nom FROM users WHERE id = ? AND club_id = ?', [contactId, req.user.club_id])
+  if (!contactRows.length) return res.status(400).json({ error: 'Ce membre n\'est pas dans votre association.' })
+
+  /* Conversation directe existante entre les deux ? (clé = paire de participants) */
+  const [existing] = await q(
+    `SELECT c.id FROM conversations c
+     JOIN conversation_participants a ON a.conversation_id = c.id AND a.user_id = ?
+     JOIN conversation_participants b ON b.conversation_id = c.id AND b.user_id = ?
+     WHERE c.club_id = ? AND c.sujet = ''`,
+    [req.user.id, contactId, req.user.club_id]
+  )
+  if (existing.length) return res.json({ conversationId: existing[0].id })
+
+  /* Créer la conversation + les deux participations. */
+  const cid = randomUUID()
+  await q('INSERT INTO conversations (id, club_id, created_by, sujet) VALUES (?,?,?,?)',
+    [cid, req.user.club_id, req.user.id, ''])
+  await q('INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?,?)', [cid, req.user.id])
+  await q('INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?,?)', [cid, contactId])
+  res.json({ conversationId: cid })
+})
+
+/* Conversation de groupe (sujet + plusieurs membres). */
+router.post('/messages/conversations/group', requireAuth, async (req, res) => {
+  const { sujet, memberIds } = req.body || {}
+  if (!req.user.club_id) return res.status(400).json({ error: 'Aucun club associé à votre compte.' })
+  if (!Array.isArray(memberIds) || !memberIds.length) return res.status(400).json({ error: 'Aucun membre sélectionné.' })
+  const cid = randomUUID()
+  await q('INSERT INTO conversations (id, club_id, created_by, sujet) VALUES (?,?,?,?)',
+    [cid, req.user.club_id, req.user.id, String(sujet || '').slice(0, 180)])
+  const all = [req.user.id, ...memberIds.filter((m) => m !== req.user.id)]
+  for (const uid of all) {
+    await q('INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?,?)', [cid, uid])
+  }
+  res.json({ conversationId: cid })
+})
+
+/* Messages d'une conversation (participant uniquement). */
+router.get('/messages/conversations/:id', requireAuth, async (req, res) => {
+  const [part] = await q(
+    'SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ?',
+    [req.params.id, req.user.id]
+  )
+  if (!part.length) return res.status(403).json({ error: 'Accès refusé à cette conversation.' })
+  const [conv] = await q('SELECT * FROM conversations WHERE id = ?', [req.params.id])
+  if (!conv.length) return res.status(404).json({ error: 'Conversation introuvable.' })
+
+  const [messages] = await q(
+    `SELECT m.id, m.conversation_id, m.sender_id, m.body, m.created_at, u.nom AS sender_name, u.role AS sender_role
+     FROM messages m
+     LEFT JOIN users u ON u.id = m.sender_id
+     WHERE m.conversation_id = ?
+     ORDER BY m.created_at ASC`,
+    [req.params.id]
+  )
+  /* Marquer comme lu (last_read_at = maintenant). */
+  await q('UPDATE conversation_participants SET last_read_at = CURRENT_TIMESTAMP WHERE conversation_id = ? AND user_id = ?',
+    [req.params.id, req.user.id])
+  res.json({ conversation: conv[0], messages })
+})
+
+/* Envoyer un message. */
+router.post('/messages/conversations/:id/messages', requireAuth, async (req, res) => {
+  const body = String(req.body?.body || '').trim()
+  if (!body) return res.status(400).json({ error: 'Message vide.' })
+  if (body.length > 4000) return res.status(400).json({ error: 'Message trop long (4000 caractères max).' })
+  const [part] = await q(
+    'SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ?',
+    [req.params.id, req.user.id]
+  )
+  if (!part.length) return res.status(403).json({ error: 'Accès refusé à cette conversation.' })
+  const id = randomUUID()
+  await q('INSERT INTO messages (id, conversation_id, sender_id, body) VALUES (?,?,?,?)',
+    [id, req.params.id, req.user.id, body])
+  await q('UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [req.params.id])
+  /* Relais email automatique aux autres participants (silencieux si Mailjet absent). */
+  try {
+    const [others] = await q(
+      `SELECT u.id, u.email, u.nom FROM conversation_participants cp
+       JOIN users u ON u.id = cp.user_id
+       WHERE cp.conversation_id = ? AND cp.user_id != ?`,
+      [req.params.id, req.user.id]
+    )
+    for (const o of others) {
+      emailNewMessage({ email: o.email, nom: o.nom, from: req.user.nom, body }).catch(() => {})
+    }
+  } catch { /* relais best-effort */ }
+  res.json({ ok: true, id })
+})
+
+/* Compteur global de messages non lus (badge cloche). */
+router.get('/messages/unread-count', requireAuth, async (req, res) => {
+  if (!req.user.club_id) return res.json({ count: 0 })
+  const [rows] = await q(
+    `SELECT COUNT(*) AS n FROM messages m
+     JOIN conversation_participants cp ON cp.conversation_id = m.conversation_id AND cp.user_id = ?
+     JOIN conversations c ON c.id = m.conversation_id AND c.club_id = ?
+     WHERE m.sender_id != ? AND m.created_at > COALESCE(cp.last_read_at, to_timestamp(0))`,
+    [req.user.id, req.user.club_id, req.user.id]
+  )
+  res.json({ count: Number(rows[0].n) })
 })
 
 /* ============================ ADMIN (superadmin) ============================ */
@@ -323,8 +534,9 @@ router.get('/admin/db-stats', requireAuth, requireSuper, async (req, res) => {
   for (const t of tables) {
     try {
       const [r] = await q(`SELECT COUNT(*) AS n FROM ${t}`)
-      stats[t] = r[0].n
-      detail.push({ table: t, rows: r[0].n })
+      /* pg renvoie COUNT en bigint→string ; caster pour un JSON cohérent. */
+      stats[t] = Number(r[0].n)
+      detail.push({ table: t, rows: Number(r[0].n) })
     } catch {
       stats[t] = null
     }

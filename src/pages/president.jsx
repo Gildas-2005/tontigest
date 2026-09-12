@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { api } from '../lib/api'
 import { useStore, useAuth, BUREAU_LABELS } from '../lib/store'
 import { PageHeader, Card, Button, Badge, Modal, Field, Input, Select, Textarea, Stat, Tabs, Avatar, statusTone, EmptyState, RowItem } from '../components/ui'
 import { Donut, Bars, Legend } from '../components/charts'
@@ -7,11 +8,16 @@ import {
   Play, Pause, Flag, Save,
   Megaphone, AlertTriangle, Inbox, Check, ListChecks, Landmark, Timer,
   CircleCheck, TriangleAlert, Siren, ShieldCheck, Ban, User, Feather,
-  Plus, ArrowRight, FileDown, MessageSquare, Mail, Bell, Scale, Banknote,
+  Plus, ArrowRight, FileDown, MessageSquare, Mail, Scale, Banknote,
   ChevronUp, ChevronDown,
 } from '../components/icons'
 
 /* ============================ DASHBOARD PRÉSIDENT ============================ */
+/* Fenêtre glissante des n derniers mois (clés YYYY-MM). */
+const lastMonths = (n = 6) => Array.from({ length: n }, (_, i) => {
+  const d = new Date(); d.setMonth(d.getMonth() - (n - 1 - i)); return d.toISOString().slice(0, 7)
+})
+
 export function PresidentHome() {
   const { db } = useStore()
   const { user } = useAuth()
@@ -22,9 +28,12 @@ export function PresidentHome() {
   const mois = monthKey()
   const cotisMois = sum(validées.filter(o => monthKey(o.date) === mois), o => o.montant)
   const aJour = db.membres.filter(m => m.statut === 'Actif' && !db.penalites.some(p => p.membreId === m.id && !p.payee)).length
-  const prochainTour = db.ordrePassage.find(id => db.membres.find(m => m.id === id).statut === 'Actif')
+  /* Prochain bénéficiaire : premier membre actif de l'ordre qui n'a pas encore
+     de cotisation validée pour son tour (sinon le premier actif de l'ordre). */
+  const prochainTour = db.ordrePassage.find(id => db.membres.find(m => m.id === id)?.statut === 'Actif')
   const ben = byId(db.membres, prochainTour)
-  const moisCotis = ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', mois].map(k => ({ label: monthLabel(k).split(' ')[0].slice(0, 4), value: sum(validées.filter(o => monthKey(o.date) === k), o => o.montant) }))
+  /* Fenêtre glissante des 6 derniers mois (plus de mois hardcodés). */
+  const moisCotis = lastMonths(6).map(k => ({ label: monthLabel(k).split(' ')[0].slice(0, 4), value: sum(validées.filter(o => monthKey(o.date) === k), o => o.montant) }))
   const PALETTE = ['#187830', '#d8a800', '#07331a', '#9ac48b', '#e7b233', '#8fb396', '#6b7f8e', '#b5651d']
   const caisseData = Object.entries(db.caisse.XAF || {})
     .map(([label, value], i) => ({ label, value: value || 0, color: PALETTE[i % PALETTE.length] }))
@@ -46,7 +55,7 @@ export function PresidentHome() {
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-gold-300">Bénéficiaire du tour en cours</p>
               <p className="font-display text-lg font-semibold">{ben?.nom}</p>
-              <p className="text-xs text-brand-100/60">Montant attendu : {fmtXAF(t.tauxEnchereMin)}</p>
+              <p className="text-xs text-brand-100/60">Montant attendu : {fmtXAF(t.montantTour || t.montantCotisation)}</p>
             </div>
           </div>
         </div>
@@ -197,7 +206,7 @@ export function TontinePage() {
             <Field label="Fréquence"><Select value={form.frequence} onChange={e => setForm(f => ({ ...f, frequence: e.target.value }))} options={['Hebdomadaire', 'Mensuelle', 'Trimestrielle']} /></Field>
             <Field label="Pénalité de retard"><Input type="number" value={form.penaliteRetard} onChange={e => setForm(f => ({ ...f, penaliteRetard: +e.target.value }))} /></Field>
             <Field label="Taux de prêt (%)"><Input type="number" value={form.tauxPret} onChange={e => setForm(f => ({ ...f, tauxPret: +e.target.value }))} /></Field>
-            <Field label="Montant du tour (XAF)"><Input type="number" value={form.tauxEnchereMin} onChange={e => setForm(f => ({ ...f, tauxEnchereMin: +e.target.value }))} /></Field>
+            <Field label="Montant du tour (XAF)"><Input type="number" value={form.montantTour || 0} onChange={e => setForm(f => ({ ...f, montantTour: +e.target.value }))} /></Field>
             <Field label="Banque du club" className="sm:col-span-2 xl:col-span-3"><Input value={form.banque} onChange={e => setForm(f => ({ ...f, banque: e.target.value }))} /></Field>
           </div>
           <div className="mt-4"><Button variant="gold" onClick={save} icon={<Save size={16} />}>Enregistrer les paramètres</Button></div>
@@ -224,32 +233,78 @@ export function OrdrePage() {
       return { ...d, ordrePassage: arr }
     })
   }
+  /* Retirer un membre de l'ordre (exclusion / départ) — le président garde
+     la main sur la composition du cycle. */
+  const retirer = (id) => {
+    const m = byId(db.membres, id)
+    if (!window.confirm(`Retirer ${m?.nom || 'ce membre'} du calendrier de passage ?`)) return
+    setDb(d => ({ ...d, ordrePassage: d.ordrePassage.filter(x => x !== id) }))
+    toast(`${m?.nom || 'Membre'} retiré du calendrier`)
+  }
+  /* Ajouter un membre actif absent de l'ordre (en fin de cycle). */
+  const absents = db.membres.filter(m => m.statut === 'Actif' && !db.ordrePassage.includes(m.id))
+  const ajouter = (id) => {
+    setDb(d => ({ ...d, ordrePassage: [...d.ordrePassage, id] }))
+    toast('Membre ajouté en fin de calendrier')
+  }
+  /* Nombre de tours réellement servis = cotisations validées rattachées à un
+     tour (une par bénéficiaire) ; le tour "en cours" est le suivant. */
+  const toursServis = db.ordrePassage.filter((id) =>
+    db.cotisations.some(c => c.membreId === id && c.statut === 'Validée')).length
+  /* Validation réelle : notification à tous les membres actifs (persistée + synchronisée). */
+  const validerCalendrier = () => {
+    if (!db.ordrePassage.length) return toast('Ajoutez des membres au calendrier avant de valider', 'error')
+    setDb(d => ({
+      ...d,
+      notifications: [...d.notifications, ...d.membres
+        .filter(m => m.statut === 'Actif')
+        .map(m => {
+          const pos = d.ordrePassage.indexOf(m.id)
+          return { id: uid('nt'), pour: m.id, titre: 'Calendrier validé', message: `Le calendrier de passage a été validé par le président.${pos >= 0 ? ` Vous êtes ${pos + 1}${pos === 0 ? 'er' : 'e'} sur ${d.ordrePassage.length}.` : ''}`, lu: false, date: now() }
+        })],
+    }))
+    toast('Calendrier validé — membres notifiés')
+  }
   return (
     <div>
       <PageHeader title="Calendrier de passage" sub="Approuvez et ajustez l'ordre des bénéficiaires du cycle."
-        actions={<Button variant="gold" icon={<CircleCheck size={16} />} onClick={() => toast('Calendrier de passage validé et notifié aux membres')}>Valider le calendrier</Button>} />
+        actions={<Button variant="gold" icon={<CircleCheck size={16} />} onClick={validerCalendrier}>Valider le calendrier</Button>} />
       <Card pad={false}>
         <div className="p-3">
           {db.ordrePassage.map((id, i) => {
             const m = byId(db.membres, id)
-            const déjà = i < 3
+            const servi = i < toursServis
             return (
               <div key={id} className="flex items-center gap-3 rounded-xl px-3 py-3 transition hover:bg-brand-50/60">
-                <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl font-display font-semibold ${déjà ? 'bg-brand-100 text-brand-700' : 'bg-brand-950 text-gold-300'}`}>{i + 1}</span>
-                <Avatar name={m.nom} size="sm" />
+                <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl font-display font-semibold ${servi ? 'bg-brand-100 text-brand-700' : i === toursServis ? 'bg-gold-100 text-gold-700' : 'bg-brand-950 text-gold-300'}`}>{i + 1}</span>
+                <Avatar name={m?.nom || '?'} size="sm" />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{m.nom}</p>
-                  <p className="text-xs text-ink/50">{BUREAU_LABELS[m.role]}</p>
+                  <p className="truncate text-sm font-semibold">{m?.nom || 'Membre retiré'}</p>
+                  <p className="text-xs text-ink/50">{m ? BUREAU_LABELS[m.role] : '—'}</p>
                 </div>
-                {déjà ? <Badge tone="green">Tour servi</Badge> : i === 3 ? <Badge tone="brand" dot>Tour en cours</Badge> : <Badge tone="gray">Prévu</Badge>}
+                {servi ? <Badge tone="green">Tour servi</Badge> : i === toursServis ? <Badge tone="brand" dot>Tour en cours</Badge> : <Badge tone="gray">Prévu</Badge>}
                 <div className="ml-2 flex gap-1">
                   <button onClick={() => move(id, -1)} disabled={i === 0} className="grid h-8 w-8 place-items-center rounded-lg bg-black/5 text-xs transition hover:bg-brand-100 disabled:opacity-30 cursor-pointer"><ChevronUp size={16} /></button>
                   <button onClick={() => move(id, 1)} disabled={i === db.ordrePassage.length - 1} className="grid h-8 w-8 place-items-center rounded-lg bg-black/5 text-xs transition hover:bg-brand-100 disabled:opacity-30 cursor-pointer"><ChevronDown size={16} /></button>
+                  <button onClick={() => retirer(id)} title="Retirer du calendrier" className="grid h-8 w-8 place-items-center rounded-lg bg-red-50 text-red-600 text-xs transition hover:bg-red-100 cursor-pointer"><Ban size={14} /></button>
                 </div>
               </div>
             )
           })}
         </div>
+        {absents.length > 0 && (
+          <div className="border-t border-black/5 p-4">
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-ink/45">Membres actifs hors calendrier ({absents.length})</p>
+            <div className="flex flex-wrap gap-2">
+              {absents.map(m => (
+                <button key={m.id} onClick={() => ajouter(m.id)}
+                  className="flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-800 transition hover:border-brand-400 cursor-pointer">
+                  <Plus size={13} /> {m.nom}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   )
@@ -276,7 +331,7 @@ export function MembresPage() {
     const m = { id: uid('m'), ...form, role: 'Membre', statut: 'En attente', twoFA: false, dateAdhesion: today(), photo: null }
     setDb(d => ({ ...d, membres: [...d.membres, m], ordrePassage: [...d.ordrePassage, m.id], notifications: [...d.notifications, { id: uid('nt'), pour: m.id, titre: 'Bienvenue au club', message: `Votre compte ${d.tontine.nom} a été créé. Il sera actif après validation du bureau.`, lu: false, date: now() }] }))
     setOpen(false); setForm({ nom: '', tel: '', email: '', profession: '' }); setErrors({})
-    toast(`Membre « ${m.nom} » enregistré (statut : en attente d'aotivation)`)
+    toast(`Membre « ${m.nom} » enregistré (statut : en attente d'activation)`)
   }
   const importBulk = () => {
     const lignes = bulk.split('\n').map(l => l.trim()).filter(Boolean).map(l => { const [nom, tel] = l.split(/[;,\t]/); return { nom: nom?.trim(), tel: tel?.trim() } }).filter(x => x.nom && x.tel)
@@ -337,7 +392,7 @@ export function MembresPage() {
             </Field>
             <Field label="Profession"><Input value={form.profession} onChange={e => setForm(f => ({ ...f, profession: e.target.value }))} placeholder="Ex : Commerçant(e)" /></Field>
           </div>
-          <Field label="E-mail (optionnel)" error={errors.email} hint="Permet au membre de créer son compte avec oe même e-mail.">
+          <Field label="E-mail (optionnel)" error={errors.email} hint="Permet au membre de créer son compte avec ce même e-mail.">
             <Input type="email" value={form.email} error={errors.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="membre@exemple.om" />
           </Field>
         </div>
@@ -553,30 +608,70 @@ export function AlertesPage() {
 /* ============================ NOTIFICATIONS DE MASSE ============================ */
 export function DiffusionPage() {
   const { db, setDb, toast } = useStore()
-  const [form, setForm] = useState({ message: '', canal: 'WhatsApp', cible: 'Tous les membres' })
-  const envoyer = () => {
+  const { user } = useAuth()
+  const [form, setForm] = useState({ message: '', canal: 'In-app + email', cible: 'Tous les membres' })
+  const [sending, setSending] = useState(false)
+
+  /* Ciblage réel : la sélection détermine réellement les destinataires. */
+  const cibles = () => {
+    if (form.cible === 'Membres en retard') {
+      return db.membres.filter(m => m.statut === 'Actif' && !db.cotisations.some(c => c.membreId === m.id && c.statut === 'Validée' && monthKey(c.date) === monthKey()))
+    }
+    if (form.cible === 'Bureau uniquement') {
+      return db.membres.filter(m => m.statut === 'Actif' && ['President', 'Tresorier', 'Secretaire', 'Commissaire'].includes(m.role))
+    }
+    return db.membres.filter(m => m.statut === 'Actif')
+  }
+
+  const envoyer = async () => {
     if (form.message.trim().length < 5) return toast('Le message est trop court', 'error')
-    setDb(d => ({ ...d, notifsMasse: [{ id: uid('nm'), date: today(), ...form }, ...d.notifsMasse], notifications: [...d.notifications, ...db.membres.filter(m => m.statut === 'Actif').map(m => ({ id: uid('nt'), pour: m.id, titre: 'Message du bureau', message: form.message, lu: false, date: now() }))] }))
+    const destinataires = cibles()
+    if (!destinataires.length) return toast('Aucun destinataire pour cette cible', 'error')
+
+    setSending(true)
+    /* 1. Notification in-app — source principale, toujours créée. */
+    setDb(d => ({
+      ...d,
+      notifsMasse: [{ id: uid('nm'), date: today(), ...form, par: user.nom }, ...d.notifsMasse],
+      notifications: [...d.notifications, ...destinataires.map(m => ({ id: uid('nt'), pour: m.id, titre: 'Message du bureau', message: form.message, lu: false, date: now() }))],
+    }))
+
+    /* 2. Relais externe email/SMS — si les passerelles serveur sont configurées ;
+        en leur absence l'in-app seule est honnêtement annoncée. */
+    let relais = { email: 0, sms: 0 }
+    try {
+      const results = await Promise.allSettled(destinataires.map(m =>
+        api.notifyExternal({ email: m.email || null, tel: m.tel || null, titre: 'Message du bureau', message: form.message })))
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value?.channels) {
+          if (r.value.channels.email) relais.email++
+          if (r.value.channels.sms) relais.sms++
+        }
+      }
+    } catch { /* relais best-effort */ }
+    setSending(false)
     setForm(f => ({ ...f, message: '' }))
-    toast(`Message diffusé à ${db.membres.filter(m => m.statut === 'Actif').length} membres via ${form.canal}`)
+    toast(`Diffusion in-app à ${destinataires.length} membre(s)` + (relais.email || relais.sms ? ` + relais externes (${relais.email} email(s), ${relais.sms} SMS)` : ''))
   }
   return (
     <div>
-      <PageHeader title="Notification de masse" sub="Diffusez un message à tous les membres par WhatsApp, SMS ou notification push." />
+      <PageHeader title="Notification de masse" sub="Diffusez un message aux membres — in-app toujours, email/SMS en relais si configurés." />
       <div className="grid gap-5 lg:grid-cols-5 stagger">
         <Card title="Composer" className="lg:col-span-2">
           <div className="space-y-4">
             <Field label="Cible"><Select value={form.cible} onChange={e => setForm(f => ({ ...f, cible: e.target.value }))} options={['Tous les membres', 'Membres en retard', 'Bureau uniquement']} /></Field>
-            <Field label="Canal d'envoi"><Select value={form.canal} onChange={e => setForm(f => ({ ...f, canal: e.target.value }))} options={['WhatsApp', 'SMS', 'Push in-app']} /></Field>
+            <Field label="Relais externe" hint="L'in-app est toujours envoyée ; l'email/SMS part si les passerelles serveur sont configurées.">
+              <Select value={form.canal} onChange={e => setForm(f => ({ ...f, canal: e.target.value }))} options={['In-app + email', 'In-app + SMS']} />
+            </Field>
             <Field label="Message" hint={`${form.message.length}/500 caractères`}><Textarea maxLength={500} value={form.message} onChange={e => setForm(f => ({ ...f, message: e.target.value }))} placeholder="Ex : Rappel — la cotisation d'octobre doit être réglée avant le 5…" /></Field>
-            <Button variant="gold" className="w-full" onClick={envoyer} icon={<Megaphone size={16} />}>Diffuser maintenant</Button>
+            <Button variant="gold" className="w-full" onClick={envoyer} disabled={sending} icon={<Megaphone size={16} />}>{sending ? 'Diffusion…' : 'Diffuser maintenant'}</Button>
           </div>
         </Card>
         <Card title="Historique des diffusions" className="lg:col-span-3" pad={false}>
           <div className="p-3">
             {db.notifsMasse.length === 0 && <EmptyState icon={<Megaphone size={16} />} title="Aucune diffusion" />}
             {db.notifsMasse.map(n => (
-              <RowItem key={n.id} icon={n.canal === 'WhatsApp' ? <MessageSquare size={16} className="text-brand-600" /> : n.canal === 'SMS' ? <Mail size={16} className="text-amber-600" /> : <Bell size={16} className="text-sky-600" />} title={n.message} sub={`${n.canal} · ${n.cible} · ${fmtDate(n.date)}`} />
+              <RowItem key={n.id} icon={n.canal === 'In-app + SMS' ? <MessageSquare size={16} className="text-brand-600" /> : <Mail size={16} className="text-amber-600" />} title={n.message} sub={`${n.canal} · ${n.cible} · ${fmtDate(n.date)}${n.par ? ` · par ${n.par}` : ''}`} />
             ))}
           </div>
         </Card>

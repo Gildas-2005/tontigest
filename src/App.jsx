@@ -10,8 +10,9 @@ import { PresidentHome, TontinePage, OrdrePage, MembresPage, BureauPage, Sanctio
 import { TresorierHome, CotisationsPage, CaissePage, BanqueOpsPage, PenalitesPage, EpargnePage, PretsPage, InteretsPage, AidesPage, RapportsFinPage } from './pages/tresorier'
 import { SecretariatHome, SeancesPage, ConvocationsPage, ParrainagePage, ReclamationsPage, ArchivesPage } from './pages/secretaire'
 import { AuditHome, AuditTransactionsPage, AuditMembresPage, AuditRapportsPage, FraudePage } from './pages/commissaire'
-import { MembreHome, PayerPage, HistoriquePage, CalendrierPage, PretsMembrePage, AidesMembrePage, EpargneMembrePage } from './pages/membre'
+import { MembreHome, PayerPage, HistoriquePage, CalendrierPage, PretsMembrePage, AidesMembrePage, EpargneMembrePage, ReclamationsMembrePage, PenalitesMembrePage } from './pages/membre'
 import { AdminHome, AdminClubs, AdminUsers } from './pages/admin'
+import { MessageriePage } from './pages/messagerie'
 import {
   LayoutDashboard, User, Settings, CalendarDays, Users, Crown, Scale, FileText,
   AlertTriangle, Megaphone, CircleDollarSign, Wallet, Landmark, PiggyBank,
@@ -22,11 +23,19 @@ import {
 
 const ic = (C) => <C size={18} />
 
-/* Minimal hash router */
+/* Minimal hash router — gère la query string (#/payer?status=success&ref=…)
+   utilisée par les retours de passerelle de paiement. */
 function useRoute() {
-  const [route, setRoute] = useState(() => window.location.hash.replace(/^#\/?/, '') || 'accueil')
+  const parse = () => {
+    const raw = window.location.hash.replace(/^#\/?/, '')
+    const [path, qs] = raw.split('?')
+    const params = {}
+    if (qs) for (const [k, v] of new URLSearchParams(qs)) params[k] = v
+    return { path: path || 'accueil', params }
+  }
+  const [route, setRoute] = useState(parse)
   useEffect(() => {
-    const h = () => setRoute(window.location.hash.replace(/^#\/?/, '') || 'accueil')
+    const h = () => setRoute(parse())
     window.addEventListener('hashchange', h)
     return () => window.removeEventListener('hashchange', h)
   }, [])
@@ -38,6 +47,7 @@ const NAV = {
   President: [
     { group: 'Général', items: [
       { id: 'accueil', label: 'Tableau de bord', icon: ic(LayoutDashboard), el: PresidentHome },
+      { id: 'messagerie', label: 'Messagerie', icon: ic(MessageSquare), el: MessageriePage },
       { id: 'profil', label: 'Mon profil', icon: ic(User), el: ProfilPage },
     ]},
     { group: 'Pilotage', items: [
@@ -56,6 +66,7 @@ const NAV = {
   Tresorier: [
     { group: 'Général', items: [
       { id: 'accueil', label: 'Tableau de bord', icon: ic(LayoutDashboard), el: TresorierHome },
+      { id: 'messagerie', label: 'Messagerie', icon: ic(MessageSquare), el: MessageriePage },
       { id: 'profil', label: 'Mon profil', icon: ic(User), el: ProfilPage },
     ]},
     { group: 'Trésorerie', items: [
@@ -77,6 +88,7 @@ const NAV = {
   Secretaire: [
     { group: 'Général', items: [
       { id: 'accueil', label: 'Tableau de bord', icon: ic(LayoutDashboard), el: SecretariatHome },
+      { id: 'messagerie', label: 'Messagerie', icon: ic(MessageSquare), el: MessageriePage },
       { id: 'profil', label: 'Mon profil', icon: ic(User), el: ProfilPage },
     ]},
     { group: 'Vie du club', items: [
@@ -90,6 +102,7 @@ const NAV = {
   Commissaire: [
     { group: 'Général', items: [
       { id: 'accueil', label: 'Tableau de bord audit', icon: ic(LayoutDashboard), el: AuditHome },
+      { id: 'messagerie', label: 'Messagerie', icon: ic(MessageSquare), el: MessageriePage },
       { id: 'profil', label: 'Mon profil', icon: ic(User), el: ProfilPage },
     ]},
     { group: 'Audit', items: [
@@ -102,6 +115,7 @@ const NAV = {
   Membre: [
     { group: 'Général', items: [
       { id: 'accueil', label: 'Mon espace', icon: ic(Home), el: MembreHome },
+      { id: 'messagerie', label: 'Messagerie', icon: ic(MessageSquare), el: MessageriePage },
       { id: 'profil', label: 'Mon profil', icon: ic(User), el: ProfilPage },
     ]},
     { group: 'Mes opérations', items: [
@@ -113,6 +127,8 @@ const NAV = {
       { id: 'prets', label: 'Mes prêts', icon: ic(HandCoins), el: PretsMembrePage },
       { id: 'aides', label: 'Aides sociales', icon: ic(Heart), el: AidesMembrePage },
       { id: 'epargne', label: 'Mon épargne', icon: ic(PiggyBank), el: EpargneMembrePage },
+      { id: 'reclamations-membre', label: 'Mes réclamations', icon: ic(MessageSquare), el: ReclamationsMembrePage },
+      { id: 'penalites-membre', label: 'Mes pénalités', icon: ic(Scale), el: PenalitesMembrePage },
     ]},
   ],
   SuperAdmin: [
@@ -120,6 +136,7 @@ const NAV = {
       { id: 'accueil', label: 'Vue globale', icon: ic(LayoutDashboard), el: AdminHome },
       { id: 'clubs', label: 'Clubs', icon: ic(Building2), el: AdminClubs },
       { id: 'utilisateurs', label: 'Utilisateurs', icon: ic(Users), el: AdminUsers },
+      { id: 'profil', label: 'Mon profil', icon: ic(User), el: ProfilPage },
     ]},
   ],
 }
@@ -171,7 +188,7 @@ function AppInner() {
   }
 
   const pages = flatten(NAV[viewRole] || NAV.Membre)
-  const current = pages.find(p => p.id === route) || pages[0]
+  const current = pages.find(p => p.id === route.path) || pages[0]
 
   // Club en préparation : le Président voit l'écran de mise en route sur l'accueil.
   const enPreparation = !user.isSuperAdmin && db.tontine?.statut === 'Preparation' && user.role === 'President' && current.id === 'accueil'
@@ -179,7 +196,7 @@ function AppInner() {
   return (
     <Shell nav={pages} page={current.id} setPage={go}>
       <div className="animate-fade-in">
-        {enPreparation ? <Welcome onNavigate={go} /> : <current.el />}
+        {enPreparation ? <Welcome onNavigate={go} /> : <current.el routeParams={route.params} />}
       </div>
     </Shell>
   )
