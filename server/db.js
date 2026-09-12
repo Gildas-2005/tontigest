@@ -41,6 +41,8 @@ const SCHEMA_MIGRATIONS = [
   "ALTER TABLE clubs ADD COLUMN taux_pret DOUBLE NOT NULL DEFAULT 0",
   "ALTER TABLE clubs ADD COLUMN date_debut DATE NULL",
   "ALTER TABLE clubs ADD COLUMN banque VARCHAR(190) NOT NULL DEFAULT ''",
+  // Transport JSON des clubs (source de vérité, projetée dans les colonnes ci-dessus).
+  "ALTER TABLE clubs ADD COLUMN payload LONGTEXT NULL",
   // Suspension / activation des comptes par le superadministrateur.
   "ALTER TABLE users ADD COLUMN statut VARCHAR(30) NOT NULL DEFAULT 'Actif'",
   // Caisses complémentaires (annuelle, scolaire…) : paramètres propres à chaque caisse.
