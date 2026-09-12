@@ -1,13 +1,13 @@
 {
-  "name": "TontiGest — Club Solidarité",
+  "name": "TontiGest — Gestion de tontine",
   "short_name": "TontiGest",
-  "description": "Application de gestion de tontine — Club Solidarité, Cameroun",
+  "description": "Application de gestion de tontine : cotisations, tours, prêts, épargne et audit.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#032018",
-  "theme_color": "#063626",
+  "background_color": "#032a1d",
+  "theme_color": "#0e6242",
   "icons": [
-    { "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/logo.jpeg", "sizes": "2048x2048", "type": "image/jpeg", "purpose": "any" },
     { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
   ]
 }

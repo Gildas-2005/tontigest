@@ -1,14 +1,15 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useEffect } from 'react'
 import { cls, initials } from '../lib/utils'
+import { X, FolderOpen, CircleAlert } from './icons'
 
 /* Buttons */
 const BTN = {
-  primary: 'bg-brand-600 text-white hover:bg-brand-700 shadow-lg shadow-brand-600/25',
-  gold: 'bg-gradient-to-r from-gold-400 to-gold-500 text-brand-950 hover:from-gold-300 hover:to-gold-400 shadow-lg shadow-gold-500/30',
+  primary: 'bg-brand-500 text-white hover:bg-brand-600 shadow-md shadow-brand-900/20',
+  gold: 'bg-gold-400 text-brand-950 hover:bg-gold-300 shadow-md shadow-gold-600/25',
   outline: 'border border-brand-200 bg-white text-brand-800 hover:border-brand-400 hover:bg-brand-50',
   ghost: 'text-brand-700 hover:bg-brand-50',
-  danger: 'bg-red-600 text-white hover:bg-red-700 shadow-lg shadow-red-600/25',
+  danger: 'bg-red-600 text-white hover:bg-red-700 shadow-md shadow-red-600/20',
   dark: 'bg-brand-950 text-white hover:bg-brand-900',
 }
 export function Button({ variant = 'primary', size = 'md', icon, children, className, ...p }) {
@@ -24,7 +25,7 @@ export function Button({ variant = 'primary', size = 'md', icon, children, class
 /* Card */
 export function Card({ title, subtitle, actions, children, className, pad = true }) {
   return (
-    <section className={cls('rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(16,32,25,.05),0_8px_24px_-12px_rgba(16,32,25,.12)]', className)}>
+    <section className={cls('rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(4,34,15,.05),0_8px_24px_-12px_rgba(4,34,15,.12)]', className)}>
       {(title || actions) && (
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-black/5 px-5 py-4">
           <div>
@@ -39,22 +40,32 @@ export function Card({ title, subtitle, actions, children, className, pad = true
   )
 }
 
-/* Stat */
-export function Stat({ label, value, sub, icon, tone = 'brand', delay }) {
+/* Stat — widget de solde unifié : carte blanche, padding constant,
+   accent coloré en tête, chiffre tronqué proprement. */
+export function Stat({ label, value, sub, icon, tone = 'brand', delay, large }) {
   const tones = {
-    brand: 'from-brand-500 to-brand-700', gold: 'from-gold-400 to-gold-600',
-    red: 'from-red-500 to-red-700', blue: 'from-sky-500 to-sky-700', violet: 'from-violet-500 to-violet-700',
+    brand: { grad: 'from-brand-600 to-brand-800', bar: 'bg-brand-600', soft: 'bg-brand-50 text-brand-700' },
+    gold: { grad: 'from-gold-400 to-gold-600', bar: 'bg-gold-500', soft: 'bg-gold-50 text-gold-700' },
+    red: { grad: 'from-red-500 to-red-700', bar: 'bg-red-500', soft: 'bg-red-50 text-red-600' },
   }
+  const T = tones[tone] || tones.brand
   return (
-    <div style={delay ? { animationDelay: delay } : undefined} className="group animate-fade-up relative overflow-hidden rounded-2xl border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(16,32,25,.05),0_8px_24px_-12px_rgba(16,32,25,.12)] transition-transform duration-300 hover:-translate-y-1">
-      <div className={cls('absolute -right-6 -top-6 h-24 w-24 rounded-full bg-gradient-to-br opacity-[.07] transition-transform duration-500 group-hover:scale-[1.8]', tones[tone])} />
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-ink/45">{label}</p>
-          <p className="mt-1.5 truncate font-display text-2xl font-semibold text-ink">{value}</p>
-          {sub && <p className="mt-1 text-xs text-ink/50">{sub}</p>}
+    <div style={delay ? { animationDelay: delay } : undefined}
+      className="group animate-fade-up relative overflow-hidden rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(4,34,15,.05),0_8px_24px_-12px_rgba(4,34,15,.12)] transition-all duration-200 hover:border-brand-200 hover:shadow-[0_2px_4px_rgba(4,34,15,.06),0_12px_28px_-14px_rgba(4,34,15,.18)]">
+      <span className={`absolute inset-x-0 top-0 h-1 ${T.bar}`} />
+      <div className={cls('flex items-start justify-between gap-3 p-5', large && 'items-center sm:items-start')}>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[11px] font-bold uppercase tracking-wider text-ink/45">{label}</p>
+          <p className={cls('mt-1.5 font-display font-semibold tabular-nums text-ink', large ? 'text-3xl' : 'text-2xl')}>
+            <span className="block truncate">{value}</span>
+          </p>
+          {sub && <p className="mt-1 truncate text-xs text-ink/50">{sub}</p>}
         </div>
-        {icon && <div className={cls('grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-lg text-white shadow-md', tones[tone])}>{icon}</div>}
+        {icon && (
+          <span className={cls('grid h-11 w-11 shrink-0 place-items-center rounded-xl', large ? cls('bg-gradient-to-br text-white shadow-md', T.grad) : T.soft)}>
+            {icon}
+          </span>
+        )}
       </div>
     </div>
   )
@@ -100,7 +111,7 @@ export function Modal({ open, onClose, title, subtitle, children, footer, wide }
             <h3 className="font-display text-lg font-semibold">{title}</h3>
             {subtitle && <p className="mt-0.5 text-xs text-ink/50">{subtitle}</p>}
           </div>
-          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full bg-black/5 text-ink/60 transition hover:bg-black/10 cursor-pointer" aria-label="Fermer">✕</button>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full bg-black/5 text-ink/60 transition hover:bg-black/10 cursor-pointer" aria-label="Fermer"><X size={16} /></button>
         </header>
         <div className="overflow-y-auto px-6 py-5">{children}</div>
         {footer && <footer className="flex flex-wrap justify-end gap-2 border-t border-black/5 px-6 py-4">{footer}</footer>}
@@ -109,19 +120,38 @@ export function Modal({ open, onClose, title, subtitle, children, footer, wide }
   )
 }
 
-/* Form fields */
-const FIELD = 'w-full rounded-xl border border-black/10 bg-white px-3.5 py-2.5 text-sm outline-none transition placeholder:text-ink/35 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15'
-export const Input = (p) => <input {...p} className={cls(FIELD, p.className)} />
-export const Textarea = (p) => <textarea {...p} className={cls(FIELD, 'min-h-24', p.className)} />
-export function Select({ options = [], children, ...p }) {
-  return <select {...p} className={cls(FIELD, 'appearance-none bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23122019%22%20stroke-width%3D%222.5%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E")] bg-[position:right_0.9rem_center] bg-no-repeat pr-9', p.className)}>{children || options.map(o => <option key={o.value ?? o} value={o.value ?? o}>{o.label ?? o}</option>)}</select>
+/* Form fields — états vide / focus / erreur harmonisés */
+const FIELD_BASE = 'w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm outline-none transition placeholder:text-ink/35 focus:ring-4'
+export const Input = ({ error, ...p }) => (
+  <input {...p} aria-invalid={!!error} className={cls(FIELD_BASE, error
+    ? 'border-red-400 focus:border-red-500 focus:ring-red-500/10'
+    : 'border-black/10 focus:border-brand-500 focus:ring-brand-500/10', p.className)} />
+)
+export const Textarea = ({ error, ...p }) => (
+  <textarea {...p} aria-invalid={!!error} className={cls(FIELD_BASE, 'min-h-24', error
+    ? 'border-red-400 focus:border-red-500 focus:ring-red-500/10'
+    : 'border-black/10 focus:border-brand-500 focus:ring-brand-500/10', p.className)} />
+)
+export function Select({ options = [], error, children, ...p }) {
+  return <select {...p} aria-invalid={!!error} className={cls(FIELD_BASE, 'appearance-none bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23131a2b%22%20stroke-width%3D%222.5%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E")] bg-[position:right_0.9rem_center] bg-no-repeat pr-9', error
+    ? 'border-red-400 focus:border-red-500 focus:ring-red-500/10'
+    : 'border-black/10 focus:border-brand-500 focus:ring-brand-500/10', p.className)}>{children || options.map(o => <option key={o.value ?? o} value={o.value ?? o}>{o.label ?? o}</option>)}</select>
 }
-export function Field({ label, children, hint }) {
+export function Field({ label, children, hint, required, error }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-ink/55">{label}</span>
+      <span className="mb-1.5 flex items-baseline gap-1 text-xs font-bold uppercase tracking-wide text-ink/55">
+        {label}
+        {required && <span className="text-red-500" aria-hidden>*</span>}
+      </span>
       {children}
-      {hint && <span className="mt-1 block text-xs text-ink/45">{hint}</span>}
+      {error ? (
+        <span className="mt-1 flex items-center gap-1 text-xs font-semibold text-red-600">
+          <CircleAlert size={13} className="shrink-0" /> {error}
+        </span>
+      ) : hint ? (
+        <span className="mt-1 block text-xs text-ink/45">{hint}</span>
+      ) : null}
     </label>
   )
 }
@@ -199,10 +229,10 @@ export function Avatar({ name, size = 'md', ring }) {
 }
 
 /* Empty state */
-export function EmptyState({ icon = '🗂️', title, sub, action }) {
+export function EmptyState({ icon = <FolderOpen size={28} />, title, sub, action }) {
   return (
     <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-black/10 bg-white/50 px-6 py-10 text-center">
-      <span className="text-3xl opacity-70">{icon}</span>
+      <span className="grid h-12 w-12 place-items-center rounded-xl bg-black/[.04] text-ink/40">{icon}</span>
       <p className="font-semibold">{title}</p>
       {sub && <p className="max-w-xs text-xs text-ink/50">{sub}</p>}
       {action && <div className="mt-2">{action}</div>}

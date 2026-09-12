@@ -1,78 +1,112 @@
 @import "tailwindcss";
 
+/* Mode sombre piloté par la classe .dark sur <html> (bouton dans la barre supérieure). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Fraunces", Georgia, serif;
 
-  --color-brand-50: #ecf7f1;
-  --color-brand-100: #d3ecdf;
-  --color-brand-200: #a8d9bf;
-  --color-brand-300: #6fbf99;
-  --color-brand-400: #3aa274;
-  --color-brand-500: #17855a;
-  --color-brand-600: #0d6e4b;
-  --color-brand-700: #0a573d;
-  --color-brand-800: #084531;
-  --color-brand-900: #063626;
-  --color-brand-950: #032018;
+  /* Vert TontiGest — extrait exact du logo officiel (#004818 / #187830) */
+  --color-brand-50: #eef8f1;
+  --color-brand-100: #d6eee0;
+  --color-brand-200: #aeddbe;
+  --color-brand-300: #7bc79a;
+  --color-brand-400: #46ab74;
+  --color-brand-500: #187830;
+  --color-brand-600: #12632a;
+  --color-brand-700: #0d5023;
+  --color-brand-800: #0a411f;
+  --color-brand-900: #07331a;
+  --color-brand-950: #04220f;
 
+  /* Or du logo (#D8A800) — accents et validations */
   --color-gold-50: #fdf8e9;
-  --color-gold-100: #f9edc4;
-  --color-gold-200: #f2da8a;
-  --color-gold-300: #ecc556;
-  --color-gold-400: #e7b233;
-  --color-gold-500: #d99b1c;
-  --color-gold-600: #bd7a13;
-  --color-gold-700: #945a13;
-  --color-gold-800: #7a4715;
-  --color-gold-900: #683c16;
+  --color-gold-100: #f9eec8;
+  --color-gold-200: #f0dc90;
+  --color-gold-300: #e5c654;
+  --color-gold-400: #d8a800;
+  --color-gold-500: #c19500;
+  --color-gold-600: #9a7600;
+  --color-gold-700: #7a5c00;
+  --color-gold-800: #604700;
+  --color-gold-900: #4d3800;
 
-  --color-cream: #f6f4ef;
-  --color-ink: #122019;
+  --color-cream: #f6f9f6;
+  --color-ink: #12201a;
 
-  --animate-fade-up: fade-up .55s cubic-bezier(.22,1,.36,1) both;
-  --animate-fade-in: fade-in .5s ease both;
-  --animate-scale-in: scale-in .35s cubic-bezier(.22,1,.36,1) both;
-  --animate-slide-left: slide-left .5s cubic-bezier(.22,1,.36,1) both;
-  --animate-float: float 7s ease-in-out infinite;
-  --animate-gradient: gradient-pan 14s ease infinite;
+  /* Animations : courtes, discrètes, au service du contenu */
+  --animate-fade-up: fade-up .35s cubic-bezier(.22,1,.36,1) both;
+  --animate-fade-in: fade-in .25s ease both;
+  --animate-scale-in: scale-in .22s cubic-bezier(.22,1,.36,1) both;
+  --animate-slide-left: slide-left .3s cubic-bezier(.22,1,.36,1) both;
+  --animate-float: float 9s ease-in-out infinite;
+  --animate-gradient: gradient-pan 22s ease infinite;
   --animate-shimmer: shimmer 2.4s linear infinite;
-  --animate-pulse-soft: pulse-soft 2.6s ease-in-out infinite;
+  --animate-pulse-soft: pulse-soft 3.2s ease-in-out infinite;
   --animate-spin-slow: spin 14s linear infinite;
 
-  @keyframes fade-up { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+  @keyframes fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
   @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-  @keyframes scale-in { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
-  @keyframes slide-left { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
-  @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-14px); } }
+  @keyframes scale-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+  @keyframes slide-left { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+  @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
   @keyframes gradient-pan { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
   @keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
   @keyframes loadingbar { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
-  @keyframes pulse-soft { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+  @keyframes pulse-soft { 0%,100% { opacity: 1; } 50% { opacity: .6; } }
 }
 
 html { scroll-behavior: smooth; }
 body { margin: 0; font-family: var(--font-sans); background: var(--color-cream); color: var(--color-ink); -webkit-font-smoothing: antialiased; }
 
+/* ---------- Mode sombre : surfaces remappées ----------
+   La classe .dark est posée sur <html>. Les composants utilisent les mêmes
+   tokens (bg-white, text-ink, bg-cream…) remappés ici en sombre. */
+.dark body { background: #0d1512; color: #e7efe9; }
+.dark { color-scheme: dark; }
+.dark .bg-white { background-color: #15201b; }
+.dark .bg-cream { background-color: #0d1512; }
+.dark .bg-black\/5, .dark .bg-black\/\[\.04\], .dark .bg-black\/\[\.03\] { background-color: rgba(255,255,255,.07); }
+.dark .bg-black\/\[\.05\] { background-color: rgba(255,255,255,.06); }
+.dark .bg-black\/\[\.07\] { background-color: rgba(255,255,255,.09); }
+.dark .text-ink { color: #e7efe9; }
+.dark .text-ink\/60, .dark .text-ink\/65 { color: rgba(231,239,233,.62); }
+.dark .text-ink\/55, .dark .text-ink\/50 { color: rgba(231,239,233,.52); }
+.dark .text-ink\/45, .dark .text-ink\/40, .dark .text-ink\/35 { color: rgba(231,239,233,.42); }
+.dark .border-black\/5 { border-color: rgba(255,255,255,.08); }
+.dark .border-black\/10 { border-color: rgba(255,255,255,.12); }
+.dark .glass { background: rgba(13,21,18,.82); }
+.dark .bg-brand-50 { background-color: rgba(24,120,48,.14); }
+.dark .text-brand-900 { color: #dff0e5; }
+.dark .text-brand-800 { color: #c9e5d3; }
+.dark .text-brand-700 { color: #7bc79a; }
+.dark .bg-gold-50 { background-color: rgba(216,168,0,.14); }
+.dark .shadow-\\[0_1px_2px_rgba\\(4\\,34\\,15\\,\\.05\\)\\,0_8px_24px_-12px_rgba\\(4\\,34\\,15\\,\\.12\\)\\] { box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.55); }
+
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #c8c4b8; border-radius: 99px; border: 2px solid var(--color-cream); }
-::-webkit-scrollbar-thumb:hover { background: #a8a396; }
+::-webkit-scrollbar-thumb { background: #c2ccc6; border-radius: 99px; border: 2px solid var(--color-cream); }
+::-webkit-scrollbar-thumb:hover { background: #9aab9f; }
+.dark ::-webkit-scrollbar-thumb { background: #2c3a33; border: 2px solid #0d1512; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #3d4f46; }
 
-.glass { background: rgba(255,255,255,.72); backdrop-filter: blur(14px); }
-.glass-dark { background: rgba(6,54,38,.55); backdrop-filter: blur(14px); }
-.gold-text { background: linear-gradient(100deg, #e7b233, #f2da8a 45%, #d99b1c); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.shimmer { background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,.35) 50%, transparent 70%); background-size: 200% 100%; animation: var(--animate-shimmer); }
+.glass { background: rgba(255,255,255,.78); backdrop-filter: blur(12px); }
+.glass-dark { background: rgba(3,42,29,.55); backdrop-filter: blur(12px); }
+.gold-text { background: linear-gradient(100deg, #e5c654, #f0dc90 45%, #d8a800); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.shimmer { background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,.28) 50%, transparent 70%); background-size: 200% 100%; animation: var(--animate-shimmer); }
 .stagger > * { animation: var(--animate-fade-up); }
-.stagger > *:nth-child(1){animation-delay:.02s} .stagger > *:nth-child(2){animation-delay:.07s}
-.stagger > *:nth-child(3){animation-delay:.12s} .stagger > *:nth-child(4){animation-delay:.17s}
-.stagger > *:nth-child(5){animation-delay:.22s} .stagger > *:nth-child(6){animation-delay:.27s}
-.stagger > *:nth-child(7){animation-delay:.32s} .stagger > *:nth-child(8){animation-delay:.37s}
-.stagger > *:nth-child(9){animation-delay:.42s} .stagger > *:nth-child(10){animation-delay:.47s}
+.stagger > *:nth-child(1){animation-delay:.02s} .stagger > *:nth-child(2){animation-delay:.05s}
+.stagger > *:nth-child(3){animation-delay:.08s} .stagger > *:nth-child(4){animation-delay:.11s}
+.stagger > *:nth-child(5){animation-delay:.14s} .stagger > *:nth-child(6){animation-delay:.17s}
+.stagger > *:nth-child(7){animation-delay:.20s} .stagger > *:nth-child(8){animation-delay:.23s}
+.stagger > *:nth-child(9){animation-delay:.26s} .stagger > *:nth-child(10){animation-delay:.29s}
+
+/* Respect des préférences d'accessibilité */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
 
 @media print {
-  body * { visibility: hidden; }
-  .print-area, .print-area * { visibility: visible; }
-  .print-area { position: absolute; inset: 0; }
   .no-print { display: none !important; }
 }

@@ -45,7 +45,7 @@ export function Bars({ data, height = 160, format = fmtNum }) {
 }
 
 /* Sparkline */
-export function Spark({ points, color = '#17855a', w = 120, h = 36 }) {
+export function Spark({ points, color = '#187830', w = 120, h = 36 }) {
   const max = Math.max(...points), min = Math.min(...points)
   const rng = max - min || 1
   const step = w / (points.length - 1 || 1)

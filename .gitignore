@@ -58,3 +58,11 @@ Thumbs.db
 # Sensitive files (auto-detected)
 node_modules
 
+
+# Scripts de diagnostic locaux
+server/debug-*
+server/diag-*
+server/test-*
+server/check-*
+server/cleanup-*
+server/purge-*

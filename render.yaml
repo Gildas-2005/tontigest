@@ -1,0 +1,79 @@
+# TontiGest — configuration de déploiement Render
+# https://render.com — plan gratuit (le service s'endort après 15 min d'inactivité,
+# le premier clic le réveille en ~30s).
+
+services:
+  # ---------- Application web (Node + Express + React buildé) ----------
+  - type: web
+    name: tontigest
+    runtime: node
+    plan: free
+    region: frankfurt # le plus proche du Cameroun
+    buildCommand: npm install && npm run build
+    startCommand: npm run server
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      # --- Base de données : liée automatiquement (voir ci-dessous) ---
+      - key: DB_HOST
+        fromDatabase:
+          name: tontigest-db
+          property: host
+      - key: DB_PORT
+        value: 3306
+      - key: DB_USER
+        fromDatabase:
+          name: tontigest-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: tontigest-db
+          property: password
+      - key: DB_NAME
+        fromDatabase:
+          name: tontigest-db
+          property: database
+      # --- Sécurité : générer un secret long et unique ---
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES
+        value: 7d
+      # --- Superadmin : CHANGER ces valeurs après le premier déploiement ---
+      - key: SUPERADMIN_EMAIL
+        value: admin@tontigest.cm
+      - key: SUPERADMIN_PASSWORD
+        sync: false # à saisir dans le dashboard Render
+      # --- GeniusPay (sandbox pour les tests en ligne) ---
+      - key: GENIUSPAY_PUBLIC_KEY
+        sync: false
+      - key: GENIUSPAY_SECRET_KEY
+        sync: false
+      - key: GENIUSPAY_BASE_URL
+        value: https://geniuspay.ci/api/v1/merchant
+      - key: GENIUSPAY_SANDBOX
+        value: "true"
+      # --- Mailjet ---
+      - key: MAILJET_API_KEY
+        sync: false
+      - key: MAILJET_SECRET_KEY
+        sync: false
+      - key: MAILJET_SENDER_EMAIL
+        sync: false
+      - key: MAILJET_SENDER_NAME
+        value: TontiGest
+
+  # ---------- Base de données MySQL gratuite ----------
+  - type: pserv
+    name: tontigest-db
+    runtime: mysql
+    plan: free
+    region: frankfurt
+    maxConnectionsPerInstance: 20
+    ipAllowList: [] # accessible uniquement par les services Render
+
+# NB : sur le plan free MySQL de Render, la base est persistante mais le
+# service web s'endort après 15 min sans trafic. Pour un réveil automatique,
+# un cron externe (cron-job.org, gratuit) peut pinger /api/health toutes les 10 min.

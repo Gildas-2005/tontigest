@@ -1,9 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { supabase } from './supabase'
-import { uid, today } from './utils'
+import { CheckCircle2, AlertTriangle, Info } from 'lucide-react'
+import { api, setToken, clearToken } from './api'
+import { uid } from './utils'
 
-/* ----------------------- Table mapping ----------------------- */
+/* ----------------------- Table mapping (clé db -> entité MySQL) ----------------------- */
 
 const TABLES = {
   membres: 'members',
@@ -15,7 +16,6 @@ const TABLES = {
   prets: 'prets',
   interetsRedistribues: 'redistributions',
   aides: 'aides',
-  encheres: 'encheres',
   seances: 'seances',
   parrainages: 'parrainages',
   reclamations: 'reclamations',
@@ -25,10 +25,16 @@ const TABLES = {
   notifsMasse: 'annonces',
   audits: 'audits',
   notifications: 'notifications',
+  convocations: 'convocations',
 }
 
+/* Caisses par défaut d'une tontine : la caisse des cotisations et la caisse
+   d'épargne existent toujours. Monnaie unique : le franc CFA (XAF).
+   Les caisses complémentaires (annuelle, scolaire…) sont ajoutées par le trésorier. */
+const CAISSE_VIDE = { XAF: { Cotisation: 0, 'Épargne': 0 } }
+
 const emptyDb = () => {
-  const db = { tontine: null }
+  const db = { tontine: null, ordrePassage: [], caisse: CAISSE_VIDE }
   for (const k of Object.keys(TABLES)) db[k] = []
   return db
 }
@@ -36,6 +42,7 @@ const emptyDb = () => {
 /* ----------------------- Clubs <-> rows ----------------------- */
 
 function clubFromRow(row) {
+  const payload = typeof row.payload === 'string' ? JSON.parse(row.payload || '{}') : (row.payload || {})
   return {
     id: row.id,
     code: row.code,
@@ -44,8 +51,8 @@ function clubFromRow(row) {
     type: row.type || 'Rotative',
     devise: row.devise || 'XAF',
     montantCotisation: Number(row.montant_cotisation) || 0,
-    statut: row.statut || 'Active',
-    ...(row.payload || {}),
+    statut: row.statut || 'Preparation',
+    ...payload,
   }
 }
 
@@ -57,16 +64,9 @@ function clubToRow(t) {
     type: payload.type || 'Rotative',
     devise: payload.devise || 'XAF',
     montant_cotisation: Number(payload.montantCotisation) || 0,
-    statut: payload.statut || 'Active',
+    statut: payload.statut || 'Preparation',
   }
-  delete payload.nom
-  delete payload.ville
-  delete payload.type
-  delete payload.devise
-  delete payload.montantCotisation
-  delete payload.statut
-  delete payload.id
-  delete payload.code
+  for (const k of ['nom', 'ville', 'type', 'devise', 'montantCotisation', 'statut', 'id', 'code']) delete payload[k]
   row.payload = payload
   return row
 }
@@ -89,13 +89,7 @@ function diffRows(prev = [], next = []) {
   return { upserts, deletes }
 }
 
-const AUTH_ERRORS = {
-  'Invalid login credentials': 'Email ou mot de passe incorrect.',
-  'Email not confirmed': 'Email non confirmé — vérifiez votre boîte de réception.',
-  'User already registered': 'Un compte existe déjà avec cet email.',
-  'Password should be at least 6 characters': 'Le mot de passe doit contenir au moins 6 caractères.',
-}
-const traduire = (e) => AUTH_ERRORS[e?.message] || e?.message || 'Une erreur est survenue.'
+const traduire = (e) => e?.message || 'Une erreur est survenue.'
 
 /* ----------------------------- Contexts ----------------------------- */
 
@@ -106,6 +100,7 @@ const ToastCtx = createContext(null)
 export function StoreProvider({ children }) {
   const [authReady, setAuthReady] = useState(false)
   const [user, setUser] = useState(null)
+  const [viewRole, setViewRoleState] = useState(null)
   const [db, setDbState] = useState(emptyDb)
   const [toasts, setToasts] = useState([])
 
@@ -121,7 +116,17 @@ export function StoreProvider({ children }) {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4200)
   }, [])
 
-  /* -------- persistence: diff & push to Supabase -------- */
+  const resetState = useCallback(() => {
+    clubIdRef.current = null
+    pending2faRef.current = false
+    dbRef.current = emptyDb()
+    lastSyncedRef.current = emptyDb()
+    setDbState(emptyDb())
+    setUser(null)
+    setViewRoleState(null)
+  }, [])
+
+  /* -------- persistance : diff & push vers l'API MySQL -------- */
   const flush = useCallback(async () => {
     const prev = lastSyncedRef.current
     const next = dbRef.current
@@ -131,39 +136,28 @@ export function StoreProvider({ children }) {
     try {
       const merged = (t) => t ? ({ ...t, ordrePassage: next.ordrePassage, caisse: next.caisse }) : t
       if (JSON.stringify(merged(prev.tontine)) !== JSON.stringify(merged(next.tontine))) {
-        const { error } = await supabase.from('clubs').update(clubToRow(merged(next.tontine))).eq('id', cid)
-        if (error) throw error
+        await api.updateClub(cid, clubToRow(merged(next.tontine)))
       }
-      // bureau : propager le rôle vers le profil du compte lié
-      const membreDiff = diffRows(prev.membres, next.membres)
-      for (const m of membreDiff.upserts) {
-        const before = (prev.membres || []).find(x => x.id === m.id)
-        if (m._user_id && before && before.role !== m.role) {
-          await supabase.from('profiles').update({ role: m.role }).eq('id', m._user_id)
-        }
-      }
-      for (const [key, table] of Object.entries(TABLES)) {
+      for (const [key, entity] of Object.entries(TABLES)) {
         const { upserts, deletes } = diffRows(prev[key], next[key])
         if (upserts.length) {
           const rows = upserts.map(r => {
-            const row = { id: r.id, club_id: cid, payload: sanitize(r) }
+            const row = { id: r.id, payload: sanitize(r) }
             if (key === 'membres' && r._user_id) row.user_id = r._user_id
             return row
           })
-          const { error } = await supabase.from(table).upsert(rows)
-          if (error) { lastSyncedRef.current = prev; throw error }
+          await api.upsertRecords(cid, entity, rows)
         }
-        if (deletes.length) {
-          const { error } = await supabase.from(table).delete().in('id', deletes)
-          if (error) { lastSyncedRef.current = prev; throw error }
-        }
+        if (deletes.length) await api.deleteRecords(cid, entity, deletes)
       }
     } catch (e) {
-      toast(`Erreur de synchronisation : ${e.message || e}`, 'error')
+      lastSyncedRef.current = prev
+      if (e.status === 401) { resetState(); return }
+      toast(`Erreur de synchronisation : ${traduire(e)}`, 'error')
     }
-  }, [toast])
+  }, [toast, resetState])
 
-  /* -------- local state mutation (single source: dbRef) -------- */
+  /* -------- mutation locale (source unique : dbRef) -------- */
   const setDb = useCallback((mut) => {
     const next = mut(dbRef.current)
     if (next === dbRef.current) return
@@ -173,234 +167,231 @@ export function StoreProvider({ children }) {
     timerRef.current = setTimeout(() => { flush() }, 350)
   }, [flush])
 
-  /* -------- loading -------- */
-  const applyProfile = useCallback(async (profile, authUser) => {
-    setUser({
+  /* -------- rechargement distant (ex : après confirmation de paiement serveur) -------- */
+  const reloadClub = useCallback(async () => {
+    const cid = clubIdRef.current
+    if (!cid) return
+    try {
+      const { club, records } = await api.clubData(cid)
+      const data = emptyDb()
+      data.tontine = club ? clubFromRow(club) : null
+      for (const [key, entity] of Object.entries(TABLES)) {
+        data[key] = (records[entity] || []).map(r => {
+          const payload = typeof r.payload === 'string' ? JSON.parse(r.payload || '{}') : (r.payload || {})
+          const obj = { ...payload, id: r.id }
+          if (key === 'membres' && r.user_id) obj._user_id = r.user_id
+          return obj
+        })
+      }
+      data.ordrePassage = data.tontine?.ordrePassage || []
+      data.caisse = data.tontine?.caisse || CAISSE_VIDE
+      // Préserver les modifications locales non encore synchronisées.
+      dbRef.current = data
+      lastSyncedRef.current = data
+      setDbState(data)
+    } catch {
+      toast('Impossible de rafraîchir les données du club', 'error')
+    }
+  }, [toast])
+
+  /* -------- chargement -------- */
+  const applyProfile = useCallback(async (profile) => {
+    const base = {
       authId: profile.id,
       id: profile.id,
-      email: authUser?.email || '',
+      email: profile.email || '',
       nom: profile.nom || '',
       role: profile.role || 'Membre',
       tel: profile.telephone || '',
       photo: profile.photo || null,
       twoFA: !!profile.two_fa,
       onboardingDone: !!profile.onboarding_done,
-      clubId: profile.club_id,
-    })
+      clubId: profile.club_id || null,
+      isSuperAdmin: !!profile.is_superadmin,
+    }
+    setUser(base)
+    setViewRoleState(null)
+
     if (profile.club_id) {
       const cid = profile.club_id
       clubIdRef.current = cid
-      const queries = [
-        supabase.from('clubs').select('*').eq('id', cid).maybeSingle(),
-        ...Object.entries(TABLES).map(([k, t]) =>
-          k === 'membres'
-            ? supabase.from(t).select('id, payload, user_id').eq('club_id', cid)
-            : supabase.from(t).select('id, payload').eq('club_id', cid)),
-      ]
-      const results = await Promise.all(queries)
-      const firstErr = results.find(r => r.error)
-      if (firstErr) { toast(`Erreur de chargement : ${firstErr.error.message}`, 'error'); return }
-      const data = emptyDb()
-      data.tontine = results[0].data ? clubFromRow(results[0].data) : null
-      Object.keys(TABLES).forEach((k, i) => {
-        data[k] = (results[i + 1].data || []).map(r => {
-          const obj = { ...(r.payload || {}), id: r.id }
-          if (k === 'membres' && r.user_id) obj._user_id = r.user_id
-          return obj
-        })
-      })
-      data.ordrePassage = data.tontine?.ordrePassage || []
-      data.caisse = data.tontine?.caisse || { XAF: { Caisse: 0, Banque: 0, OM: 0, MoMo: 0 }, EUR: { Caisse: 0, Banque: 0 } }
-      const me = data.membres.find(m => m._user_id === profile.id)
-      dbRef.current = data
-      lastSyncedRef.current = data
-      setDbState(data)
-      setUser(u => u ? { ...u, id: me?.id || profile.id } : u)
+      try {
+        const { club, records } = await api.clubData(cid)
+        const data = emptyDb()
+        data.tontine = club ? clubFromRow(club) : null
+        for (const [key, entity] of Object.entries(TABLES)) {
+          data[key] = (records[entity] || []).map(r => {
+            const payload = typeof r.payload === 'string' ? JSON.parse(r.payload || '{}') : (r.payload || {})
+            const obj = { ...payload, id: r.id }
+            if (key === 'membres' && r.user_id) obj._user_id = r.user_id
+            return obj
+          })
+        }
+        data.ordrePassage = data.tontine?.ordrePassage || []
+        data.caisse = data.tontine?.caisse || CAISSE_VIDE
+        const me = data.membres.find(m => m._user_id === profile.id)
+        dbRef.current = data
+        lastSyncedRef.current = data
+        setDbState(data)
+        if (me) setUser(u => u ? { ...u, id: me.id } : u)
+      } catch (e) {
+        toast(`Erreur de chargement : ${traduire(e)}`, 'error')
+      }
+    } else {
+      clubIdRef.current = null
+      dbRef.current = emptyDb()
+      lastSyncedRef.current = emptyDb()
+      setDbState(emptyDb())
     }
   }, [toast])
 
-  const resetState = useCallback(() => {
-    clubIdRef.current = null
-    pending2faRef.current = false
-    dbRef.current = emptyDb()
-    lastSyncedRef.current = emptyDb()
-    setDbState(emptyDb())
-    setUser(null)
-  }, [])
-
-  /* -------- session bootstrap -------- */
+  /* -------- bootstrap de session -------- */
   useEffect(() => {
     let active = true
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!active) return
-      if (data?.session?.user) {
-        const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.session.user.id).maybeSingle()
-        if (profile && !profile.two_fa) await applyProfile(profile, data.session.user)
-        else if (profile) { pending2faRef.current = true; await supabase.auth.signOut() }
+    ;(async () => {
+      try {
+        const { user: me } = await api.me()
+        if (active && me) await applyProfile(me)
+      } catch {
+        clearToken()
+      } finally {
+        if (active) setAuthReady(true)
       }
-      if (active) setAuthReady(true)
-    })
-    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT') resetState()
-    })
-    return () => { active = false; sub.subscription.unsubscribe() }
-  }, [applyProfile, resetState])
+    })()
+    return () => { active = false }
+  }, [applyProfile])
 
-  /* -------- auth actions -------- */
-  const fetchProfile = async (authId) => {
-    const { data } = await supabase.from('profiles').select('*').eq('id', authId).maybeSingle()
-    return data
-  }
-
+  /* -------- actions d'authentification -------- */
   const signIn = useCallback(async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) return { error: traduire(error) }
-    const profile = await fetchProfile(data.user.id)
-    if (!profile) return { error: 'Profil introuvable — contactez le bureau du club.' }
-    if (profile.two_fa) {
-      const code = String(Math.floor(100000 + Math.random() * 900000))
-      await supabase.from('profiles').update({ two_fa_code: code }).eq('id', profile.id)
-      pending2faRef.current = { email, password }
-      await supabase.auth.signOut()
-      return { need2fa: true, code }
-    }
-    await applyProfile(profile, data.user)
-    return {}
+    try {
+      const res = await api.login(email, password)
+      if (res.need2fa) {
+        pending2faRef.current = { email, password }
+        return { need2fa: true, code: res.code, channel: res.channel || 'simulation' }
+      }
+      setToken(res.token)
+      await applyProfile(res.user)
+      return {}
+    } catch (e) { return { error: traduire(e) } }
   }, [applyProfile])
 
   const confirm2fa = useCallback(async (code) => {
     const pending = pending2faRef.current
     if (!pending) return { error: 'Session expirée — reconnectez-vous.' }
-    const { data, error } = await supabase.auth.signInWithPassword({ email: pending.email, password: pending.password })
-    if (error) return { error: traduire(error) }
-    const profile = await fetchProfile(data.user.id)
-    if (!profile || profile.two_fa_code !== code) {
-      await supabase.auth.signOut()
-      return { error: 'Code de vérification incorrect.' }
-    }
-    await supabase.from('profiles').update({ two_fa_code: null }).eq('id', profile.id)
-    pending2faRef.current = false
-    await applyProfile(profile, data.user)
-    return {}
+    try {
+      const res = await api.confirm2fa(pending.email, pending.password, code)
+      setToken(res.token)
+      pending2faRef.current = false
+      await applyProfile(res.user)
+      return {}
+    } catch (e) { return { error: traduire(e) } }
   }, [applyProfile])
 
   const signUp = useCallback(async ({ nom, telephone, email, password }) => {
-    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { nom, telephone } } })
-    if (error) return { error: traduire(error) }
-    if (!data.session) return { needConfirm: true }
-    let profile = await fetchProfile(data.user.id)
-    if (!profile) {
-      await supabase.from('profiles').insert({ id: data.user.id, nom, telephone })
-      profile = await fetchProfile(data.user.id)
-    }
-    await applyProfile(profile || { id: data.user.id, nom, telephone, role: 'Membre' }, data.user)
-    return {}
+    try {
+      const res = await api.signup({ nom, telephone, email, password })
+      setToken(res.token)
+      await applyProfile(res.user)
+      return {}
+    } catch (e) { return { error: traduire(e) } }
   }, [applyProfile])
 
   const resetPassword = useCallback(async (email) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email)
-    if (error) return { error: traduire(error) }
-    return {}
+    try {
+      const res = await api.forgot(email)
+      return { code: res.code, channel: res.channel || 'simulation' }
+    } catch (e) { return { error: traduire(e) } }
   }, [])
 
-  const changePassword = useCallback(async (password) => {
-    const { error } = await supabase.auth.updateUser({ password })
-    if (error) return { error: traduire(error) }
-    return {}
+  const resetConfirm = useCallback(async (email, code, newPassword) => {
+    try {
+      await api.reset(email, code, newPassword)
+      return {}
+    } catch (e) { return { error: traduire(e) } }
   }, [])
 
-  const signOut = useCallback(async () => {
-    await supabase.auth.signOut()
+  const changePassword = useCallback(async (oldPassword, newPassword) => {
+    try {
+      await api.changePassword(oldPassword, newPassword)
+      return {}
+    } catch (e) { return { error: traduire(e) } }
+  }, [])
+
+  const signOut = useCallback(() => {
+    clearToken()
     resetState()
   }, [resetState])
 
-  /* -------- club actions -------- */
+  /* -------- actions club -------- */
   const createClub = useCallback(async (form) => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return { error: 'Session expirée.' }
-    const { data: club, error } = await supabase.from('clubs').insert({
-      nom: form.nom,
-      ville: form.ville || '',
-      type: form.type || 'Rotative',
-      montant_cotisation: Number(form.montantCotisation) || 0,
-      statut: 'Active',
-      created_by: user.id,
-      payload: {
-        frequence: form.frequence || 'Mensuelle',
-        penaliteRetard: Number(form.penaliteRetard) || 0,
-        tauxPret: Number(form.tauxPret) || 10,
-        dateDebut: today(),
-        banque: form.banque || '',
-        ordrePassage: [],
-        caisse: { XAF: { Caisse: 0, Banque: 0, OM: 0, MoMo: 0 }, EUR: { Caisse: 0, Banque: 0 } },
-      },
-    }).select('*').single()
-    if (error) return { error: traduire(error) }
-    await supabase.from('profiles').update({ club_id: club.id, role: 'President' }).eq('id', user.id)
-    const memberId = uid('m')
-    await supabase.from('members').insert({
-      id: memberId, club_id: club.id, user_id: user.id,
-      payload: { id: memberId, nom: form.nomPresident || form.nom || 'Président', role: 'President', tel: form.telephone || '', email: user.email || '', statut: 'Actif', dateAdhesion: today(), photo: null },
-    })
-    await applyProfile({ ...(await fetchProfile(user.id)), club_id: club.id, role: 'President' }, user)
-    return { club }
+    try {
+      const res = await api.createClub({ nom: form.nom, ville: form.ville })
+      const { user: me } = await api.me()
+      await applyProfile(me)
+      return { club: { id: res.clubId, code: res.code } }
+    } catch (e) { return { error: traduire(e) } }
   }, [applyProfile])
 
   const joinClub = useCallback(async (code) => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return { error: 'Session expirée.' }
-    const { data: club } = await supabase.from('clubs').select('*').eq('code', String(code || '').trim().toUpperCase()).maybeSingle()
-    if (!club) return { error: 'Aucun club trouvé avec ce code.' }
-    const profile = await fetchProfile(user.id)
-    const memberId = uid('m')
-    const { error } = await supabase.from('members').insert({
-      id: memberId, club_id: club.id, user_id: user.id,
-      payload: { id: memberId, nom: profile?.nom || user.email, role: 'Membre', tel: profile?.telephone || '', email: user.email || '', statut: 'Actif', dateAdhesion: today(), photo: null },
-    })
-    if (error) return { error: 'Impossible de rejoindre ce club : ' + traduire(error) }
-    await supabase.from('profiles').update({ club_id: club.id, role: 'Membre' }).eq('id', user.id)
-    await applyProfile({ ...(profile || {}), club_id: club.id, role: 'Membre' }, user)
-    return { club }
+    try {
+      const res = await api.joinClub(code)
+      const { user: me } = await api.me()
+      await applyProfile(me)
+      return { club: { id: res.clubId, code: res.code } }
+    } catch (e) { return { error: traduire(e) } }
   }, [applyProfile])
 
   const completeOnboarding = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) await supabase.from('profiles').update({ onboarding_done: true }).eq('id', user.id)
+    try { await api.completeOnboarding() } catch { /* ignoré */ }
     setUser(u => u ? { ...u, onboardingDone: true } : u)
   }, [])
 
   const updateMe = useCallback(async (patch) => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      const profPatch = {}
-      if ('nom' in patch) profPatch.nom = patch.nom
-      if ('tel' in patch) profPatch.telephone = patch.tel
-      if ('photo' in patch) profPatch.photo = patch.photo
-      if ('twoFA' in patch) profPatch.two_fa = !!patch.twoFA
-      if (Object.keys(profPatch).length) await supabase.from('profiles').update(profPatch).eq('id', user.id)
+    // Colonnes du compte utilisateur
+    const userPatch = {}
+    if ('nom' in patch) userPatch.nom = patch.nom
+    if ('tel' in patch) userPatch.telephone = patch.tel
+    if ('photo' in patch) userPatch.photo = patch.photo
+    if ('twoFA' in patch) userPatch.two_fa = !!patch.twoFA
+    if (Object.keys(userPatch).length) {
+      try { await api.updateMe(userPatch) } catch { /* ignoré */ }
     }
-    const me = (dbRef.current.membres || []).find(m => m._user_id === user?.id || m.id === user?.id)
-    if (me) {
+    // Enregistrement membre correspondant (dans le club courant)
+    const cid = clubIdRef.current
+    const me = (dbRef.current.membres || []).find(m => m._user_id === user?.authId || m.id === user?.id)
+    if (cid && me) {
       const next = { ...me, ...patch }
-      const rowPatch = { payload: sanitize(next) }
-      if ('_user_id' in me) rowPatch.user_id = me._user_id
-      const { error } = await supabase.from('members').update(rowPatch).eq('id', me.id)
-      if (!error) {
+      const row = { id: me.id, payload: sanitize(next) }
+      if (me._user_id) row.user_id = me._user_id
+      try {
+        await api.upsertRecords(cid, 'members', [row])
         const nextDb = { ...dbRef.current, membres: dbRef.current.membres.map(m => m.id === me.id ? next : m) }
         dbRef.current = nextDb
         lastSyncedRef.current = nextDb
         setDbState(nextDb)
-      }
+      } catch { /* ignoré */ }
     }
     setUser(u => u ? { ...u, ...patch } : u)
     return {}
-  }, [])
+  }, [user])
 
-  const store = useMemo(() => ({ db, setDb, toast, toasts }), [db, setDb, toast, toasts])
+  const setViewRole = useCallback((role) => setViewRoleState(role), [])
+
+  const effectiveViewRole = user
+    ? (user.isSuperAdmin ? 'SuperAdmin' : (viewRole || user.role || 'Membre'))
+    : 'Membre'
+
+  const store = useMemo(() => ({ db, setDb, reloadClub, toast, toasts }), [db, setDb, reloadClub, toast, toasts])
   const auth = useMemo(() => ({
-    user, authReady, signIn, confirm2fa, signUp, resetPassword, changePassword,
+    user, authReady, viewRole: effectiveViewRole, setViewRole,
+    signIn, confirm2fa, signUp, resetPassword, resetConfirm, changePassword,
     signOut, createClub, joinClub, completeOnboarding, updateMe,
-  }), [user, authReady, signIn, confirm2fa, signUp, resetPassword, changePassword, signOut, createClub, joinClub, completeOnboarding, updateMe])
+  }), [user, authReady, effectiveViewRole, setViewRole, signIn, confirm2fa, signUp, resetPassword, resetConfirm, changePassword, signOut, createClub, joinClub, completeOnboarding, updateMe])
+
+  const toastIcon = (tone) => tone === 'error'
+    ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+    : tone === 'info' ? <Info className="mt-0.5 h-4 w-4 shrink-0" />
+      : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
 
   return (
     <StoreCtx.Provider value={store}>
@@ -413,7 +404,7 @@ export function StoreProvider({ children }) {
                 t.tone === 'error' ? 'bg-red-600 text-white border-red-500'
                 : t.tone === 'info' ? 'bg-brand-800 text-white border-brand-700'
                 : 'bg-brand-600 text-white border-brand-500'}`}>
-                <span className="mt-0.5">{t.tone === 'error' ? '⚠' : t.tone === 'info' ? 'ℹ' : '✓'}</span>
+                {toastIcon(t.tone)}
                 <span>{t.message}</span>
               </div>
             ))}
@@ -429,5 +420,6 @@ export const useAuth = () => useContext(AuthCtx)
 export const useToast = () => useContext(ToastCtx)
 
 export const BUREAU_LABELS = {
-  President: 'Président(e)', Tresorier: 'Trésorier(ère)', Secretaire: 'Secrétaire', Commissaire: 'Commissaire aux comptes', Membre: 'Membre',
+  President: 'Président(e)', Tresorier: 'Trésorier(ère)', Secretaire: 'Secrétaire',
+  Commissaire: 'Commissaire aux comptes', Membre: 'Membre', SuperAdmin: 'Superadministrateur',
 }
