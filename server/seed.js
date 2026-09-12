@@ -8,6 +8,10 @@ import { hashPassword } from './auth.js'
    sont créés par les utilisateurs depuis l'application et stockés dans MySQL. */
 
 async function ensureSuperadmin() {
+  if (!config.superadmin.email || !config.superadmin.password) {
+    console.log('  • Superadmin non créé : SUPERADMIN_EMAIL / SUPERADMIN_PASSWORD absents du .env')
+    return
+  }
   const email = config.superadmin.email.toLowerCase()
   const [rows] = await q('SELECT id FROM users WHERE email = ?', [email])
   if (rows.length) return

@@ -1,5 +1,18 @@
 /* Crée les comptes de chaque acteur (Président, Trésorier, Secrétaire, Commissaire, Membres)
-   et les rattache au club Awae Amie, avec le rôle demandé. Idempotent. */
+   et les rattache au club Awae Amie, avec le rôle demandé. Idempotent.
+   Usage : node server/create-acteurs.mjs [code-club]   (identifiants superadmin dans .env) */
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+if (fs.existsSync(path.join(root, '.env'))) {
+  for (const line of fs.readFileSync(path.join(root, '.env'), 'utf8').split('\n')) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
+    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
+  }
+}
+
 const BASE = 'http://127.0.0.1:8787/api'
 
 async function j(method, path, body, token) {
@@ -12,7 +25,9 @@ async function j(method, path, body, token) {
 }
 
 const CLUB_CODE = process.argv[2] || 'H7B5NC'
-const PASSWORD = 'Test@2026'
+const PASSWORD = 'Test@2026' // comptes de démonstration locaux
+const ADMIN_EMAIL = process.env.SUPERADMIN_EMAIL
+const ADMIN_PASSWORD = process.env.SUPERADMIN_PASSWORD
 
 const ACTEURS = [
   { nom: 'Président Test', email: 'president@tontigest.cm', tel: '+237 699 10 10 10', role: 'President' },
@@ -23,9 +38,9 @@ const ACTEURS = [
   { nom: 'Membre Deux', email: 'membre2@tontigest.cm', tel: '+237 694 60 60 60', role: 'Membre' },
 ]
 
-// 1. Login superadmin pour piloter
-const adm = await j('POST', '/auth/login', { email: 'admin@tontigest.cm', password: 'SuperAdmin2026!' })
-if (!adm.token) { console.log('Superadmin login failed:', adm); process.exit(1) }
+// 1. Login superadmin pour piloter (identifiants depuis .env)
+const adm = await j('POST', '/auth/login', { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
+if (!adm.token) { console.log('Superadmin login failed (vérifiez SUPERADMIN_EMAIL/PASSWORD dans .env):', adm); process.exit(1) }
 const adminH = { Authorization: `Bearer ${adm.token}` }
 
 // 2. Trouver le club cible

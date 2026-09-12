@@ -1,4 +1,17 @@
-/* Vérifie que chaque compte acteur se connecte et accède au club avec le bon rôle. */
+/* Vérifie que chaque compte acteur se connecte et accède au club avec le bon rôle.
+   Identifiants superadmin lus depuis .env (SUPERADMIN_EMAIL / SUPERADMIN_PASSWORD). */
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+if (fs.existsSync(path.join(root, '.env'))) {
+  for (const line of fs.readFileSync(path.join(root, '.env'), 'utf8').split('\n')) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
+    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
+  }
+}
+
 const BASE = 'http://127.0.0.1:8787/api'
 const PASSWORD = 'Test@2026'
 
@@ -12,7 +25,7 @@ async function j(method, path, body, token) {
 }
 
 const comptes = [
-  ['admin@tontigest.cm', 'SuperAdmin2026!', 'SuperAdmin'],
+  [process.env.SUPERADMIN_EMAIL, process.env.SUPERADMIN_PASSWORD, 'SuperAdmin'],
   ['president@tontigest.cm', PASSWORD, 'President'],
   ['tresorier@tontigest.cm', PASSWORD, 'Tresorier'],
   ['secretaire@tontigest.cm', PASSWORD, 'Secretaire'],

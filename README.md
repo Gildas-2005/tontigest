@@ -52,9 +52,8 @@ chaque table (lignes peuplées) depuis son tableau de bord.
 - **Node.js 20+** — [nodejs.org](https://nodejs.org)
 - **MySQL 8** installé et démarré localement (port 3306)
 
-La connexion par défaut est `root` / `gildas123` sur `127.0.0.1:3306`. Pour utiliser d'autres
-identifiants, copiez `.env.example` en `.env` et ajustez `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`
-et `DB_NAME`.
+Renseignez vos identifiants MySQL en copiant `.env.example` en `.env` puis en ajustant
+`DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` et `DB_NAME`.
 
 ## Installation
 
@@ -90,12 +89,11 @@ L'application est ensuite accessible sur **http://localhost:8787**.
 
 ### Superadministrateur
 
-| Email | Mot de passe |
-|---|---|
-| `admin@tontigest.cm` | `SuperAdmin2026!` |
+Défini via les variables d'environnement `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD`
+(fichier `.env` — voir `.env.example`). Créé automatiquement au premier démarrage.
 
-Le superadmin voit tous les clubs et utilisateurs, peut ouvrir n'importe quel club en consultation
-et réinitialiser les mots de passe. Le sien est modifiable depuis l'application (Mon profil).
+Le superadmin voit tous les clubs et utilisateurs, peut ouvrir n'importe quel club en consultation,
+suspendre/réactiver des comptes et des clubs. Son mot de passe est modifiable depuis l'application (Mon profil).
 
 ## Architecture
 

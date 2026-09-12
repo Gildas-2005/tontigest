@@ -23,20 +23,23 @@ if (process.env.NODE_ENV !== 'production' && fs.existsSync(path.join(root, '.env
 const env = (k) => String(process.env[k] || '').trim()
 
 /* ============================ BASE DE L'APP ============================ */
+/* Valeurs par défaut : DÉVELOPPEMENT LOCAL uniquement. En production,
+   toutes ces valeurs DOIVENT venir des variables d'environnement (.env /
+   dashboard Render). Un superadmin sans mot de passe env ne sera pas créé. */
 export const config = {
   port: Number(env('PORT')) || 8787,
   db: {
     host: env('DB_HOST') || '127.0.0.1',
     port: Number(env('DB_PORT')) || 3306,
     user: env('DB_USER') || 'root',
-    password: env('DB_PASSWORD') || 'gildas123',
+    password: env('DB_PASSWORD') || '',
     database: env('DB_NAME') || 'tontigest',
   },
   jwtSecret: env('JWT_SECRET') || 'tontigest-secret-local-dev-key-change-me',
   jwtExpires: env('JWT_EXPIRES') || '7d',
   superadmin: {
-    email: env('SUPERADMIN_EMAIL') || 'admin@tontigest.cm',
-    password: env('SUPERADMIN_PASSWORD') || 'SuperAdmin2026!',
+    email: env('SUPERADMIN_EMAIL'),
+    password: env('SUPERADMIN_PASSWORD'),
   },
 }
 
