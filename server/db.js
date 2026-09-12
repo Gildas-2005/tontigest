@@ -8,6 +8,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 let pool = null
 
+/* SSL : requis par les bases distantes (TiDB Cloud, etc.), inutile en local.
+   Activé automatiquement pour tout host non-localhost. */
+const needsSsl = () => !['localhost', '127.0.0.1', '::1'].includes(config.db.host)
+const sslOpts = () => (needsSsl() ? { minVersion: 'TLSv1.2', rejectUnauthorized: true } : undefined)
+
 export function getPool() {
   if (!pool) {
     pool = mysql.createPool({
@@ -19,6 +24,7 @@ export function getPool() {
       waitForConnections: true,
       connectionLimit: 10,
       charset: 'utf8mb4_unicode_ci',
+      ssl: sslOpts(),
     })
   }
   return pool
@@ -87,6 +93,7 @@ export async function bootstrapDatabase() {
     user: config.db.user,
     password: config.db.password,
     multipleStatements: true,
+    ssl: sslOpts(),
   })
   await root.query(
     `CREATE DATABASE IF NOT EXISTS \`${config.db.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
