@@ -1130,8 +1130,16 @@ export function AidesPage() {
     toast('Aide sociale enregistrée — en attente de validation')
   }
   const decider = (a, statut) => {
-    setDb(d => ({ ...d, aides: d.aides.map(x => x.id === a.id ? { ...x, statut } : x) }))
-    toast(statut === 'Rejetée' ? `Aide de ${membres[a.membreId]?.nom || '—'} rejetée` : `Aide de ${membres[a.membreId]?.nom || '—'} ${statut.toLowerCase()}`, statut === 'Rejetée' ? 'error' : 'success')
+    setDb(d => ({
+      ...d,
+      aides: d.aides.map(x => x.id === a.id ? { ...x, statut } : x),
+      /* Le membre est informé de la décision (plus de silence radio). */
+      notifications: notify(d, a.membreId, statut === 'Validée' ? 'Aide validée' : 'Aide rejetée',
+        statut === 'Validée'
+          ? `Votre demande d'aide (${a.type}) de ${fmtXAF(a.montant)} a été validée — le versement suivra prochainement.`
+          : `Votre demande d'aide (${a.type}) de ${fmtXAF(a.montant)} a été rejetée par le bureau.`),
+    }))
+    toast(statut === 'Rejetée' ? `Aide de ${membres[a.membreId]?.nom || '—'} rejetée — membre notifié` : `Aide de ${membres[a.membreId]?.nom || '—'} validée — membre notifié`, statut === 'Rejetée' ? 'error' : 'success')
   }
   const payer = (a) => {
     if ((db.caisse.XAF.Cotisation || 0) < a.montant) return toast(`Fonds de cotisation insuffisants (${fmtXAF(db.caisse.XAF.Cotisation || 0)}) — virez d'abord des fonds vers la caisse « Cotisation » avant de payer`, 'error')
@@ -1155,7 +1163,7 @@ export function AidesPage() {
         <Stat label="Validées à payer" value={fmtXAF(sum(db.aides.filter(a => a.statut === 'Validée'), a => a.montant))} sub="Prêtes pour le decaissement" icon={<Banknote size={18} />} tone="gold" />
       </div>
 
-      <Card title="Demandes d'aide" subtitle="Circuit : validation du bureau → paiement par le trésorier" pad={false}>
+      <Card title="Demandes d'aide" subtitle="Circuit : décision du bureau (valider/rejeter) → versement au bénéficiaire par le trésorier" pad={false}>
         <Table empty="Aucune demande d'aide" rows={db.aides} columns={[
           { key: 'type', label: 'Type', render: a => <Badge tone="brand"><span className="flex items-center gap-1.5">{AIDE_ICONS[a.type] || <HandHelping size={15} className="text-violet-600" />} {a.type}</span></Badge> },
           { key: 'membre', label: 'Membre', render: a => <span className="flex items-center gap-2"><Avatar name={membres[a.membreId]?.nom || '?'} size="sm" /><span className="font-semibold">{membres[a.membreId]?.nom || '—'}</span></span> },

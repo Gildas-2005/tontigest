@@ -415,6 +415,9 @@ export function HistoriquePage() {
 
   const telechargerRecu = () => {
     if (!recu) return
+    /* M6 : un reçu n'est délivrable que pour une cotisation validée —
+       un paiement en attente n'est pas un justificatif. */
+    if (recu.statut !== 'Validée') return toast('Reçu disponible uniquement après validation du paiement par le trésorier', 'error')
     pdfRecu({ club: t, cotisation: recu, membre: me || { nom: user.nom } })
     toast('Reçu téléchargé en PDF')
   }
@@ -432,13 +435,15 @@ export function HistoriquePage() {
             { key: 'montant', label: 'Montant', render: r => <span className="font-semibold">{fmtXAF(r.montant)}</span> },
             { key: 'statut', label: 'Statut', render: r => <Badge tone={statusTone(r.statut)}>{r.statut}</Badge> },
             { key: 'ref', label: 'Référence', render: r => <span className="font-mono text-xs text-ink/50">{r.ref}</span> },
-            { key: 'recu', label: '', render: r => <Button size="sm" variant="outline" icon={<Receipt size={14} />} onClick={() => setRecu(r)}>Reçu</Button> },
+            { key: 'recu', label: '', render: r => r.statut === 'Validée'
+              ? <Button size="sm" variant="outline" icon={<Receipt size={14} />} onClick={() => setRecu(r)}>Reçu</Button>
+              : <span className="text-[10px] font-semibold text-ink/35">Reçu après validation</span> },
           ]} />
         </div>
       </Card>
 
       <Modal open={!!recu} onClose={() => setRecu(null)} title="Reçu de cotisation" subtitle={`Référence ${recu?.ref}`}
-        footer={<><Button variant="ghost" onClick={() => setRecu(null)}>Fermer</Button><Button variant="gold" icon={<Printer size={16} />} onClick={() => telechargerRecu()}>Télécharger PDF</Button></>}>
+        footer={<><Button variant="ghost" onClick={() => setRecu(null)}>Fermer</Button><Button variant="gold" icon={<Printer size={16} />} disabled={recu?.statut !== 'Validée'} onClick={() => telechargerRecu()}>Télécharger PDF</Button></>}>
         <div className="rounded-2xl border border-black/10 bg-white p-6 text-center">
           <p className="font-display text-xl font-bold text-brand-900">{t.nom}</p>
           <p className="text-[11px] uppercase tracking-widest text-ink/45">{t.ville}</p>
