@@ -1,51 +1,47 @@
-# TontiGest — configuration de déploiement Render
-# https://render.com — plan gratuit (le service s'endort après 15 min d'inactivité,
-# le premier clic le réveille en ~30s).
+# TontiGest — configuration de déploiement Render (web service)
+# Plan gratuit : le service s'endort après 15 min d'inactivité,
+# le premier clic le réveille en ~30s. Astuce anti-sommeil : cron-job.org
+# qui appelle /api/health toutes les 10 minutes (voir DEPLOIEMENT.md).
+#
+# BASE DE DONNÉES : Render ne propose plus de MySQL managé.
+# Le serveur se connecte via DB_HOST/DB_USER/DB_PASSWORD/DB_NAME (env vars),
+# définis dans le dashboard Render — par exemple vers une base MySQL gratuite
+# externe (TiDB Cloud Serverless : 5 Go gratuits, protocole MySQL) ou tout
+# autre MySQL accessible sur Internet.
 
 services:
-  # ---------- Application web (Node + Express + React buildé) ----------
   - type: web
     name: tontigest
     runtime: node
     plan: free
-    region: frankfurt # le plus proche du Cameroun
+    region: frankfurt
     buildCommand: npm install && npm run build
     startCommand: npm run server
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
-      # --- Base de données : liée automatiquement (voir ci-dessous) ---
+      # --- Base MySQL externe (renseigner dans le dashboard) ---
       - key: DB_HOST
-        fromDatabase:
-          name: tontigest-db
-          property: host
+        sync: false
       - key: DB_PORT
-        value: 3306
+        value: "3306"   # 4000 pour TiDB Cloud Serverless
       - key: DB_USER
-        fromDatabase:
-          name: tontigest-db
-          property: user
+        sync: false
       - key: DB_PASSWORD
-        fromDatabase:
-          name: tontigest-db
-          property: password
+        sync: false
       - key: DB_NAME
-        fromDatabase:
-          name: tontigest-db
-          property: database
-      # --- Sécurité : générer un secret long et unique ---
+        sync: false
+      # --- Sécurité ---
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_EXPIRES
         value: 7d
-      # --- Superadmin : CHANGER ces valeurs après le premier déploiement ---
+      # --- Superadmin ---
       - key: SUPERADMIN_EMAIL
-        value: admin@tontigest.cm
+        sync: false
       - key: SUPERADMIN_PASSWORD
-        sync: false # à saisir dans le dashboard Render
+        sync: false
       # --- GeniusPay (sandbox pour les tests en ligne) ---
       - key: GENIUSPAY_PUBLIC_KEY
         sync: false
@@ -64,16 +60,3 @@ services:
         sync: false
       - key: MAILJET_SENDER_NAME
         value: TontiGest
-
-  # ---------- Base de données MySQL gratuite ----------
-  - type: pserv
-    name: tontigest-db
-    runtime: mysql
-    plan: free
-    region: frankfurt
-    maxConnectionsPerInstance: 20
-    ipAllowList: [] # accessible uniquement par les services Render
-
-# NB : sur le plan free MySQL de Render, la base est persistante mais le
-# service web s'endort après 15 min sans trafic. Pour un réveil automatique,
-# un cron externe (cron-job.org, gratuit) peut pinger /api/health toutes les 10 min.
