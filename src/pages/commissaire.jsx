@@ -76,24 +76,27 @@ export function AuditTransactionsPage() {
   const { db, setDb, toast } = useStore()
   const { user } = useAuth()
   const [sel, setSel] = useState(null)
-  const [form, setForm] = useState({ verdict: 'Conforme', note: '' })
+  const [form, setForm] = useState({ verdict: 'Conforme', note: '', pieces: '' })
 
   const récentes = [...db.mouvements].sort((a, b) => b.date.localeCompare(a.date))
   const auditer = () => {
     if (form.note.trim().length < 5) return toast('Ajoutez une note d\'audit (5 caractères minimum)', 'error')
+    /* Une anomalie exige une référence de pièce justificative (bordereau,
+       reçu, PV…) pour être consignée (C3). */
+    if (form.verdict !== 'Conforme' && !form.pieces.trim()) return toast('Référencez la pièce justificative manquante ou vérifiée (ex : PV n°12, bordereau BG-4521)', 'error')
     const anomalie = form.verdict !== 'Conforme'
     // En cas d'anomalie, alerter le Président et le Trésorier.
     const bureau = d => d.membres.filter(m => ['President', 'Tresorier'].includes(m.role))
     setDb(d => ({
       ...d,
-      audits: [{ id: uid('au'), cible: `Mouvement ${sel.type} ${fmtXAF(sel.montant)} du ${fmtDate(sel.date)}`, verdict: form.verdict, note: form.note, date: today(), par: user.nom }, ...d.audits],
+      audits: [{ id: uid('au'), cible: `Mouvement ${sel.type} ${fmtXAF(sel.montant)} du ${fmtDate(sel.date)}`, verdict: form.verdict, note: form.note, pieces: form.pieces || null, date: today(), par: user.nom }, ...d.audits],
       notifications: anomalie ? [...d.notifications, ...bureau(d).map(m => ({
         id: uid('nt'), pour: m.id, titre: '⚠ Anomalie détectée',
-        message: `Le commissaire a détecté une anomalie sur un mouvement ${sel.type} de ${fmtXAF(sel.montant)} : ${form.note}`,
+        message: `Le commissaire a détecté une anomalie sur un mouvement ${sel.type} de ${fmtXAF(sel.montant)} : ${form.note}${form.pieces ? ` (pièce : ${form.pieces})` : ''}`,
         lu: false, date: now(),
       }))] : d.notifications,
     }))
-    setSel(null); setForm({ verdict: 'Conforme', note: '' })
+    setSel(null); setForm({ verdict: 'Conforme', note: '', pieces: '' })
     toast(anomalie ? 'Anomalie consignée — Président et Trésorier notifiés' : 'Mouvement audité — verdict enregistré au registre')
   }
 
@@ -121,7 +124,7 @@ export function AuditTransactionsPage() {
             {db.audits.length === 0 && <EmptyState icon={<FileSearch size={16} />} title="Aucun audit réalisé" sub="Auditez un mouvement pour commencer." />}
             {[...db.audits].reverse().map(a => (
               <RowItem key={a.id} icon={a.verdict === 'Conforme' ? <CircleCheck size={16} className="text-brand-600" /> : <TriangleAlert size={16} className="text-amber-600" />} title={a.cible}
-                sub={`${a.note} — par ${a.par} · ${fmtDate(a.date)}`}
+                sub={`${a.note}${a.pieces ? ` · Pièce : ${a.pieces}` : ''} — par ${a.par} · ${fmtDate(a.date)}`}
                 right={<Badge tone={statusTone(a.verdict)}>{a.verdict}</Badge>} />
             ))}
           </div>
@@ -137,6 +140,11 @@ export function AuditTransactionsPage() {
               <p className="mt-1"><span className="font-semibold">Compte :</span> {sel.compte} {sel.note ? `· ${sel.note}` : ''}</p>
             </div>
             <Field label="Verdict"><Select value={form.verdict} onChange={e => setForm(f => ({ ...f, verdict: e.target.value }))} options={['Conforme', 'Anomalie']} /></Field>
+            {form.verdict !== 'Conforme' && (
+              <Field label="Pièce justificative" required hint="Référencez la pièce vérifiée ou notez « pièce manquante » — l'anomalie ne peut pas être consignée sans référence.">
+                <Input value={form.pieces} onChange={e => setForm(f => ({ ...f, pieces: e.target.value }))} placeholder="Ex : PV séance n°12 · Bordereau BG-4521 · Pièce manquante" />
+              </Field>
+            )}
             <Field label="Note d'audit" hint="Justifiez le verdict : pièces justificatives, signatures, rapprochements…">
               <Textarea className="min-h-28" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="Ex : Reçu joint, rapprochement bancaire concordant…" />
             </Field>
@@ -151,7 +159,7 @@ export function AuditTransactionsPage() {
 export function AuditRapportsPage() {
   const { db, setDb, toast } = useStore()
   const { user } = useAuth()
-  const financiers = db.rapports.filter(r => r.type === 'Financier')
+  const financiers = db.rapports.filter(r => r.type === 'Financier' || r.type === 'Rapprochement')
   const dernierAudit = [...db.rapports].filter(r => r.type === 'Audit').sort((a, b) => b.date.localeCompare(a.date))[0]
 
   const decider = (r, ok) => {
@@ -168,11 +176,15 @@ export function AuditRapportsPage() {
     const anomalies = db.audits.filter(a => a.verdict === 'Anomalie').length
     const nouvellesAlertes = db.alertes.filter(a => a.statut === 'Nouvelle').length
     const resume = `Audit interne : ${conformes} contrôle(s) conforme(s), ${anomalies} anomalie(s) détectée(s). ${nouvellesAlertes} alerte(s) en attente de traitement par le bureau. Trésor contrôlé : ${fmtXAF(sum(Object.values(db.caisse.XAF)))}.`
+    /* Le rapport d'audit est SOUMIS au président pour validation (C5) —
+       le commissaire ne s'auto-valide plus. */
+    const president = db.membres.find(m => m.role === 'President')
     setDb(d => ({
       ...d,
-      rapports: [{ id: uid('ra'), periode: monthLabel(monthKey()), type: 'Audit', statut: 'Validé', auteur: user.nom, date: today(), resume }, ...d.rapports],
+      rapports: [{ id: uid('ra'), periode: monthLabel(monthKey()), type: 'Audit', statut: 'Soumis', auteur: user.nom, date: today(), resume }, ...d.rapports],
+      notifications: president ? [...d.notifications, { id: uid('nt'), pour: president.id, titre: 'Rapport d\'audit à valider', message: `Le commissaire a soumis le rapport d'audit de ${monthLabel(monthKey())} pour validation.`, lu: false, date: now() }] : d.notifications,
     }))
-    toast('Rapport d\'audit généré, signé et archivé')
+    toast('Rapport d\'audit généré et soumis au président pour validation')
   }
   const exporterAuditPDF = () => {
     if (!dernierAudit) return
@@ -205,12 +217,14 @@ export function AuditRapportsPage() {
                   <p className="mt-0.5 text-xs text-ink/50">Par {r.auteur} · {fmtDate(r.date)}</p>
                   <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-ink/65">{r.resume}</p>
                 </div>
-                {r.statut === 'Soumis' ? (
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="danger" onClick={() => decider(r, false)}>Rejeter</Button>
-                    <Button size="sm" onClick={() => decider(r, true)}>Valider</Button>
-                  </div>
-                ) : <Badge tone={statusTone(r.statut)}>Décision rendue</Badge>}
+                {r.type === 'Rapprochement'
+                  ? <Badge tone={r.statut === 'Validée' ? 'green' : 'amber'}>{r.statut === 'Validée' ? 'Rapproché' : 'Écart à justifier'}</Badge>
+                  : r.statut === 'Soumis' ? (
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="danger" onClick={() => decider(r, false)}>Rejeter</Button>
+                      <Button size="sm" onClick={() => decider(r, true)}>Valider</Button>
+                    </div>
+                  ) : <Badge tone={statusTone(r.statut)}>Décision rendue</Badge>}
               </div>
             ))}
           </div>

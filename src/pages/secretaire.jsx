@@ -93,6 +93,7 @@ export function SeancesPage() {
   const { db, setDb, toast } = useStore()
   const [tab, setTab] = useState('calendrier')
   const [open, setOpen] = useState(false)
+  const [editId, setEditId] = useState(null) // null = création, id = édition
   const [form, setForm] = useState({ titre: '', date: '', lieu: '', ordreJour: '' })
   const [errors, setErrors] = useState({})
   const [cibleId, setCibleId] = useState('')
@@ -124,6 +125,36 @@ export function SeancesPage() {
     setOpen(false); setForm({ titre: '', date: '', lieu: '', ordreJour: '' }); setErrors({})
     toast('Séance planifiée — membres notifiés')
   }
+  /* Édition d'une séance planifiée (S3) — impossible une fois tenue (PV,
+     présences et convocations déjà rattachés). */
+  const ouvrirEdition = (s) => {
+    setEditId(s.id)
+    setForm({ titre: s.titre, date: s.date, lieu: s.lieu || '', ordreJour: s.ordreJour || '' })
+    setErrors({})
+    setOpen(true)
+  }
+  const enregistrerEdition = () => {
+    const errs = validerSeance(form)
+    setErrors(errs)
+    if (Object.values(errs).some(Boolean)) return toast('Corrigez les champs signalés', 'error')
+    setDb(d => ({ ...d,
+      seances: d.seances.map(x => x.id === editId ? { ...x, ...form } : x),
+      notifications: [...d.notifications, ...d.membres.filter(m => m.statut === 'Actif').map(m => ({
+        id: uid('nt'), pour: m.id, titre: 'Séance modifiée',
+        message: `La séance « ${form.titre} » a lieu le ${fmtDate(form.date)}${form.lieu ? ` à ${form.lieu}` : ''}.`,
+        lu: false, date: now(),
+      }))],
+    }))
+    setOpen(false); setEditId(null); setForm({ titre: '', date: '', lieu: '', ordreJour: '' }); setErrors({})
+    toast('Séance modifiée — membres notifiés')
+  }
+  /* Suppression d'une séance planifiée (S3) — les séances tenues restent
+     archivées (PV + présences conservés). */
+  const supprimer = (s) => {
+    if (!window.confirm(`Supprimer la séance planifiée « ${s.titre} » ?`)) return
+    setDb(d => ({ ...d, seances: d.seances.filter(x => x.id !== s.id) }))
+    toast(`Séance « ${s.titre} » supprimée`)
+  }
   const marquerTerminee = (s) => {
     setDb(d => ({
       ...d,
@@ -138,7 +169,11 @@ export function SeancesPage() {
   const cible = db.seances.find(s => s.id === cibleId) || planifiees[0] || triees[0]
   const presents = cible ? db.membres.filter(m => cible.presences?.[m.id]).length : 0
   const absents = db.membres.length - presents
+  /* S6 : le pointage est verrouillé une fois la séance terminée et l'appel
+     validé — on ne réécrit pas l'histoire. */
+  const pointageVerrouille = !!cible && cible.statut === 'Terminée'
   const togglePresence = (mid) => {
+    if (pointageVerrouille) return toast('Pointage verrouillé — la séance est terminée et l\'appel a été validé', 'error')
     setDb(d => ({ ...d, seances: d.seances.map(x => x.id === cible.id ? { ...x, presences: { ...x.presences, [mid]: !x.presences?.[mid] } } : x) }))
   }
   /* Validation réelle de l'appel : trace (convocations) + notification aux absents. */
@@ -201,7 +236,13 @@ export function SeancesPage() {
                   <p className="truncate text-xs text-ink/50">{fmtDate(s.date)} · {s.lieu}{s.pv ? ' · PV disponible' : ''}</p>
                 </div>
                 <Badge tone={statusTone(s.statut)} dot={s.statut === 'Planifiée'}>{s.statut}</Badge>
-                {s.statut === 'Planifiée' && <Button size="sm" variant="outline" onClick={() => marquerTerminee(s)}>Marquer terminée</Button>}
+                {s.statut === 'Planifiée'
+                  ? <div className="flex gap-1.5">
+                      <Button size="sm" variant="outline" onClick={() => marquerTerminee(s)}>Terminée</Button>
+                      <Button size="sm" variant="ghost" onClick={() => ouvrirEdition(s)}>Modifier</Button>
+                      <Button size="sm" variant="ghost" className="!text-red-600 hover:!bg-red-50" onClick={() => supprimer(s)}>Supprimer</Button>
+                    </div>
+                  : <span className="text-[10px] font-semibold text-ink/40">Archivée — non modifiable</span>}
               </div>
             ))}
           </div>
@@ -221,7 +262,9 @@ export function SeancesPage() {
               </div>
             </Card>
             <Card pad={false} title={`Membres — ${cible.titre}`} subtitle={`${fmtDate(cible.date)} · ${cible.lieu}`}
-              actions={<Button variant="gold" icon={<CircleCheck size={16} />} onClick={validerAppel}>Valider l'appel</Button>}>
+              actions={pointageVerrouille
+                ? <Badge tone="gray">Pointage verrouillé (séance terminée)</Badge>
+                : <Button variant="gold" icon={<CircleCheck size={16} />} onClick={validerAppel}>Valider l'appel</Button>}>
               <div className="p-3">
                 {db.membres.map(m => {
                   const estLa = !!cible.presences?.[m.id]
@@ -233,8 +276,8 @@ export function SeancesPage() {
                         <p className="text-xs text-ink/50">{m.tel}</p>
                       </div>
                       <div className="flex gap-1.5">
-                        <Button size="sm" variant={estLa ? 'primary' : 'outline'} onClick={() => togglePresence(m.id)}>Présent</Button>
-                        <Button size="sm" variant={!estLa ? 'danger' : 'outline'} onClick={() => togglePresence(m.id)}>Absent</Button>
+                        <Button size="sm" variant={estLa ? 'primary' : 'outline'} disabled={pointageVerrouille} onClick={() => togglePresence(m.id)}>Présent</Button>
+                        <Button size="sm" variant={!estLa ? 'danger' : 'outline'} disabled={pointageVerrouille} onClick={() => togglePresence(m.id)}>Absent</Button>
                       </div>
                     </div>
                   )
@@ -306,8 +349,8 @@ export function SeancesPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Nouvelle séance" subtitle="La séance sera visible par tous les membres"
-        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Annuler</Button><Button onClick={creer}>Planifier</Button></>}>
+      <Modal open={open} onClose={() => { setOpen(false); setEditId(null) }} title={editId ? 'Modifier la séance' : 'Nouvelle séance'} subtitle={editId ? 'Les membres seront notifiés du changement.' : 'La séance sera visible par tous les membres'}
+        footer={<><Button variant="ghost" onClick={() => { setOpen(false); setEditId(null) }}>Annuler</Button><Button onClick={editId ? enregistrerEdition : creer}>{editId ? 'Enregistrer' : 'Planifier'}</Button></>}>
         <div className="space-y-4">
           <Field label="Titre" required error={errors.titre}>
             <Input value={form.titre} error={errors.titre} onChange={e => setForm(f => ({ ...f, titre: e.target.value }))} placeholder="Ex : Séance mensuelle d'Octobre" />

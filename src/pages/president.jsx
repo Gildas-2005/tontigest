@@ -9,7 +9,7 @@ import {
   Megaphone, AlertTriangle, Inbox, Check, ListChecks, Landmark, Timer,
   CircleCheck, TriangleAlert, Siren, ShieldCheck, Ban, User, Feather,
   Plus, ArrowRight, FileDown, MessageSquare, Mail, Scale, Banknote,
-  ChevronUp, ChevronDown,
+  ChevronUp, ChevronDown, Pencil, Trash2,
 } from '../components/icons'
 
 /* ============================ DASHBOARD PRÉSIDENT ============================ */
@@ -315,19 +315,52 @@ export function MembresPage() {
   const { db, setDb, toast } = useStore()
   const [tab, setTab] = useState('liste')
   const [open, setOpen] = useState(false)
+  const [editId, setEditId] = useState(null) // null = création, id = édition
   const [form, setForm] = useState({ nom: '', tel: '', email: '', profession: '' })
   const [errors, setErrors] = useState({})
   const [importOpen, setImportOpen] = useState(false)
   const [bulk, setBulk] = useState('')
 
+  const validerMembre = (f) => runValidators(f, {
+    nom: [vRequired('Le nom complet est obligatoire.'), vMinLen(4, 'Le nom doit faire au moins 4 caractères.')],
+    tel: [vTel()],
+    email: [v => (v && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) ? 'Adresse e-mail invalide.' : ''],
+  })
+
+  /* Édition d'un membre existant (P10) — pré-remplit le formulaire. */
+  const ouvrirEdition = (m) => {
+    setEditId(m.id)
+    setForm({ nom: m.nom || '', tel: m.tel || '', email: m.email || '', profession: m.profession || '' })
+    setErrors({})
+    setOpen(true)
+  }
+  /* Suppression : uniquement si le membre n'a aucune cotisation ni poste au
+     bureau — on ne peut pas effacer l'historique financier du club. */
+  const peutSupprimer = (m) => m.role === 'Membre'
+    && !db.cotisations.some(c => c.membreId === m.id)
+    && !db.penalites.some(p => p.membreId === m.id)
+    && !db.prets.some(p => p.membreId === m.id)
+  const supprimer = (m) => {
+    if (!window.confirm(`Supprimer définitivement « ${m.nom} » ?\nAucune cotisation, pénalité ni prêt ne lui est rattaché.`)) return
+    setDb(d => ({
+      ...d,
+      membres: d.membres.filter(x => x.id !== m.id),
+      ordrePassage: d.ordrePassage.filter(x => x !== m.id),
+    }))
+    toast(`Membre « ${m.nom} » supprimé`)
+  }
+
   const add = () => {
-    const errs = runValidators(form, {
-      nom: [vRequired('Le nom complet est obligatoire.'), vMinLen(4, 'Le nom doit faire au moins 4 caractères.')],
-      tel: [vTel()],
-      email: [v => (v && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) ? 'Adresse e-mail invalide.' : ''],
-    })
+    const errs = validerMembre(form)
     setErrors(errs)
     if (Object.values(errs).some(Boolean)) return toast('Corrigez les champs signalés avant d\'enregistrer', 'error')
+    if (editId) {
+      /* Mode édition : met à jour sans toucher au statut ni au rôle. */
+      setDb(d => ({ ...d, membres: d.membres.map(m => m.id === editId ? { ...m, ...form } : m) }))
+      setOpen(false); setEditId(null); setForm({ nom: '', tel: '', email: '', profession: '' }); setErrors({})
+      toast('Membre modifié')
+      return
+    }
     const m = { id: uid('m'), ...form, role: 'Membre', statut: 'En attente', twoFA: false, dateAdhesion: today(), photo: null }
     setDb(d => ({ ...d, membres: [...d.membres, m], ordrePassage: [...d.ordrePassage, m.id], notifications: [...d.notifications, { id: uid('nt'), pour: m.id, titre: 'Bienvenue au club', message: `Votre compte ${d.tontine.nom} a été créé. Il sera actif après validation du bureau.`, lu: false, date: now() }] }))
     setOpen(false); setForm({ nom: '', tel: '', email: '', profession: '' }); setErrors({})
@@ -374,6 +407,8 @@ export function MembresPage() {
                 <div className="flex gap-1.5">
                   {m.statut === 'En attente' && <Button size="sm" onClick={() => activer(m)}>Activer</Button>}
                   {m.statut !== 'En attente' && <Button size="sm" variant="outline" onClick={() => suspendre(m)}>{m.statut === 'Suspendu' ? 'Réactiver' : 'Suspendre'}</Button>}
+                  <Button size="sm" variant="ghost" icon={<Pencil size={14} />} onClick={() => ouvrirEdition(m)} title="Modifier">Modifier</Button>
+                  {peutSupprimer(m) && <Button size="sm" variant="ghost" className="!text-red-600 hover:!bg-red-50" icon={<Trash2 size={14} />} onClick={() => supprimer(m)} title="Supprimer">Supprimer</Button>}
                 </div>
               </div>
             )
@@ -381,7 +416,7 @@ export function MembresPage() {
         </div>
       </Card>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Nouveau membre" subtitle="Le membre sera activé après vérification du bureau" footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Annuler</Button><Button onClick={add}>Enregistrer</Button></>}>
+      <Modal open={open} onClose={() => { setOpen(false); setEditId(null) }} title={editId ? 'Modifier le membre' : 'Nouveau membre'} subtitle={editId ? 'Les modifications sont visibles par tout le club.' : 'Le membre sera activé après vérification du bureau'} footer={<><Button variant="ghost" onClick={() => { setOpen(false); setEditId(null) }}>Annuler</Button><Button onClick={add}>{editId ? 'Enregistrer les modifications' : 'Enregistrer'}</Button></>}>
         <div className="space-y-4">
           <Field label="Nom complet" required error={errors.nom}>
             <Input value={form.nom} error={errors.nom} onChange={e => setForm(f => ({ ...f, nom: e.target.value }))} placeholder="Ex : Atangana Mve Barbara" />
@@ -485,12 +520,25 @@ export function BureauPage() {
 export function SanctionsPage() {
   const { db, setDb, toast } = useStore()
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ membreId: '', type: 'Amende', motif: '' })
+  const [form, setForm] = useState({ membreId: '', type: 'Amende', motif: '', montant: '' })
   const add = () => {
     if (!form.membreId || !form.motif) return toast('Membre et motif obligatoires', 'error')
+    if (form.type === 'Amende') {
+      const montant = +form.montant
+      if (!montant || montant <= 0) return toast('Le montant de l\'amende est obligatoire (XAF)', 'error')
+      /* Une amende crée une vraie pénalité à régler auprès du trésorier
+         (P9) — plus d'amende symbolique sans effet sur les comptes. */
+      setDb(d => ({ ...d,
+        sanctions: [{ id: uid('sa'), date: today(), membreId: form.membreId, type: 'Amende', motif: form.motif }, ...d.sanctions],
+        penalites: [{ id: uid('pe'), membreId: form.membreId, montant, motif: `Amende présidentielle — ${form.motif}`, date: today(), payee: false }, ...d.penalites],
+        notifications: [...d.notifications, { id: uid('nt'), pour: form.membreId, titre: 'Amende', message: `Le Président vous a infligé une amende de ${fmtXAF(montant)}. Motif : ${form.motif}. Elle est à régler auprès du trésorier.`, lu: false, date: now() }] }))
+      setOpen(false); setForm({ membreId: '', type: 'Amende', motif: '', montant: '' })
+      toast(`Amende de ${fmtXAF(+form.montant)} enregistrée — pénalité créée pour le trésorier`, 'info')
+      return
+    }
     setDb(d => ({ ...d, sanctions: [{ id: uid('sa'), date: today(), ...form }, ...d.sanctions],
       notifications: [...d.notifications, { id: uid('nt'), pour: form.membreId, titre: `Sanction — ${form.type}`, message: `Le Président vous a infligé une sanction : ${form.type}. Motif : ${form.motif}.`, lu: false, date: now() }] }))
-    setOpen(false); setForm({ membreId: '', type: 'Amende', motif: '' })
+    setOpen(false); setForm({ membreId: '', type: 'Amende', motif: '', montant: '' })
     toast('Sanction enregistrée et notifiée au membre', 'info')
   }
   const exclure = (m) => {
@@ -527,6 +575,7 @@ export function SanctionsPage() {
         <div className="space-y-4">
           <Field label="Membre concerné"><Select value={form.membreId} onChange={e => setForm(f => ({ ...f, membreId: e.target.value }))}><option value="">— Choisir —</option>{db.membres.map(m => <option key={m.id} value={m.id}>{m.nom}</option>)}</Select></Field>
           <Field label="Type"><Select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} options={['Avertissement', 'Amende', 'Exclusion']} /></Field>
+          {form.type === 'Amende' && <Field label="Montant de l'amende (XAF)" required hint="Crée une pénalité à régler auprès du trésorier."><Input type="number" value={form.montant} onChange={e => setForm(f => ({ ...f, montant: e.target.value }))} placeholder="Ex : 5000" /></Field>}
           <Field label="Motif"><Textarea value={form.motif} onChange={e => setForm(f => ({ ...f, motif: e.target.value }))} placeholder="Décrire précisément le motif…" /></Field>
         </div>
       </Modal>

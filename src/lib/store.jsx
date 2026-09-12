@@ -194,6 +194,22 @@ export function StoreProvider({ children }) {
     }
   }, [toast])
 
+  /* -------- fraîcheur croisée entre rôles : rechargement au focus + toutes
+     les 30 s — les notifications du bureau arrivent sans reconnexion. -------- */
+  useEffect(() => {
+    if (!user || !clubIdRef.current) return undefined
+    const safeReload = () => { reloadClub().catch(() => {}) }
+    const onFocus = () => safeReload()
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    const iv = setInterval(safeReload, 30000)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+      clearInterval(iv)
+    }
+  }, [user, reloadClub, db.tontine?.id])
+
   /* -------- chargement -------- */
   const applyProfile = useCallback(async (profile) => {
     const base = {

@@ -220,7 +220,8 @@ export function CaissePage() {
   const [cfgForm, setCfgForm] = useState({ nom: '', periodicite: 'Libre', cible: 0, dateDebut: '', note: '' })
   const [filtre, setFiltre] = useState('tous')
 
-  const comptesDe = () => Object.keys(db.caisse.XAF || {})
+  /* Le paramètre devise est honoré (XAF par défaut — seule devise du club). */
+  const comptesDe = (devise) => Object.keys(db.caisse[devise || 'XAF'] || {})
   const totalDe = () => sum(Object.values(db.caisse.XAF || {}))
 
   /* Palette visuelle par caisse — style portefeuille premium. */
@@ -511,12 +512,28 @@ export function CaissePage() {
 /* ============================ BANQUE ============================ */
 export function BanqueOpsPage() {
   const { db, setDb, toast } = useStore()
+  const { user } = useAuth()
   const [opForm, setOpForm] = useState({ montant: '', note: '' })
   const [bordereau, setBordereau] = useState(null)
   const [rel, setRel] = useState('')
   const banque = db.caisse.XAF.Banque || 0
   const caisse = db.caisse.XAF.Cotisation || 0
   const ecart = rel === '' ? null : (+rel || 0) - banque
+  /* Persistance du rapprochement : chaque relevé saisi est archivé en rapport
+     d'audit (visible par le commissaire) au lieu de rester éphémère. */
+  const enregistrerRapprochement = () => {
+    if (rel === '') return toast('Saisissez d\'abord le solde du relevé bancaire', 'error')
+    setDb(d => ({
+      ...d,
+      rapports: [{
+        id: uid('ra'), periode: monthLabel(monthKey()), type: 'Rapprochement',
+        statut: ecart === 0 ? 'Validée' : 'Soumis',
+        auteur: user?.nom || 'Trésorier', date: today(),
+        resume: `Rapprochement bancaire ${monthKey()} : relevé ${fmtNum(+rel || 0)} XAF, solde TontiGest ${fmtNum(banque)} XAF${ecart === 0 ? ' — rapproché sans écart.' : `, écart de ${fmtNum(Math.abs(ecart))} XAF (${ecart > 0 ? 'relevé supérieur' : 'relevé inférieur'}) à justifier.`}`,
+      }, ...d.rapports],
+    }))
+    toast(ecart === 0 ? 'Rapprochement archivé — aucun écart' : `Rapprochement archivé avec écart de ${fmtXAF(Math.abs(ecart))}`, ecart === 0 ? 'success' : 'info')
+  }
 
   const op = (kind) => {
     const montant = +opForm.montant
@@ -612,6 +629,9 @@ export function BanqueOpsPage() {
               : ecart === 0 ? <Badge tone="green" dot>Rapproché — aucun écart</Badge>
               : <Badge tone={Math.abs(ecart) > 100000 ? 'red' : 'amber'} dot>Écart : {fmtXAF(Math.abs(ecart))} {ecart > 0 ? '(relevé supérieur)' : '(relevé inférieur)'}</Badge>}
           </div>
+        </div>
+        <div className="mt-4">
+          <Button variant="outline" icon={<ClipboardList size={16} />} onClick={enregistrerRapprochement} disabled={rel === ''}>Archiver ce rapprochement</Button>
         </div>
         {ecart !== null && ecart !== 0 && (
           <p className="mt-3 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800">Vérifiez les derniers versements/retraits, les frais bancaires ou les paiements non encore crédités.</p>
@@ -1186,12 +1206,20 @@ export function RapportsFinPage() {
   const mois = monthKey()
   const membres = Object.fromEntries(db.membres.map(m => [m.id, m]))
 
+  /* Solde historique du club en fin de mois k : on rembobine les mouvements
+     postérieurs à k (le solde courant ne doit pas apparaître dans un rapport
+     d'un mois ancien). */
+  const soldeHistorique = (k) => {
+    const soldeActuel = sum(Object.values(db.caisse.XAF || {}))
+    const apres = db.mouvements.filter(m => monthKey(m.date) > k)
+    return soldeActuel - sum(apres.filter(m => m.sens === 'in'), m => m.montant) + sum(apres.filter(m => m.sens === 'out'), m => m.montant)
+  }
   const statsMois = (k) => {
     const mvs = db.mouvements.filter(m => monthKey(m.date) === k)
     return {
       encaisse: sum(mvs.filter(m => m.sens === 'in'), m => m.montant),
       decaisse: sum(mvs.filter(m => m.sens === 'out'), m => m.montant),
-      solde: sum(Object.values(db.caisse.XAF)),
+      solde: soldeHistorique(k),
     }
   }
   const genererMensuel = () => {
@@ -1203,7 +1231,8 @@ export function RapportsFinPage() {
   const cloturer = () => {
     const s = statsMois(moisCloture)
     const resume = `Clôture de ${monthLabel(moisCloture)} : encaissements ${fmtNum(s.encaisse)} XAF, decaissements ${fmtNum(s.decaisse)} XAF, solde final ${fmtNum(s.solde)} XAF. Comptes arrêtés et transmis pour validation.`
-    setDb(d => ({ ...d, rapports: [{ id: uid('ra'), periode: monthLabel(moisCloture), type: 'Financier', statut: 'Soumis', auteur: user?.nom || 'Trésorier', date: today(), resume }, ...d.rapports] }))
+    /* type 'Clôture' dédié — plus de filtre fragile sur le résumé. */
+    setDb(d => ({ ...d, rapports: [{ id: uid('ra'), periode: monthLabel(moisCloture), type: 'Clôture', statut: 'Soumis', auteur: user?.nom || 'Trésorier', date: today(), resume, soldeArrete: s.solde }, ...d.rapports] }))
     toast(`${monthLabel(moisCloture)} clôturé — rapport soumis au président`)
   }
   const impayes = db.membres.filter(m => m.statut === 'Actif' && !db.cotisations.some(o => o.membreId === m.id && o.statut === 'Validée' && monthKey(o.date) === mois))
@@ -1212,7 +1241,9 @@ export function RapportsFinPage() {
       return { id: m.id, membre: m, cotisation: db.tontine.montantCotisation, penalites: sum(pens, p => p.montant), total: db.tontine.montantCotisation + sum(pens, p => p.montant) }
     })
   const dernierIR = db.interetsRedistribues[db.interetsRedistribues.length - 1]
-  const rapportsFin = db.rapports.filter(r => r.type === 'Financier')
+  /* Rapports mensuels : exclut les clôtures (nouvelles type 'Clôture'
+     et anciennes détectées par préfixe du résumé). */
+  const rapportsFin = db.rapports.filter(r => r.type !== 'Clôture' && !(r.resume || '').startsWith('Clôture'))
 
   const telechargerRapportPDF = () => {
     if (!print) return
@@ -1299,8 +1330,8 @@ export function RapportsFinPage() {
           </Card>
           <Card title="Rapports de clôture" subtitle="Historique des arrêtés de comptes" pad={false}>
             <div className="p-3">
-              {db.rapports.filter(r => r.resume.startsWith('Clôture')).length === 0 && <EmptyState icon={<Flag size={16} />} title="Aucune clôture" sub="Clôturez un mois pour archiver l'arrêté des comptes." />}
-              {db.rapports.filter(r => r.resume.startsWith('Clôture')).map(r => (
+              {db.rapports.filter(r => r.type === 'Clôture' || (!r.type || r.type === 'Financier') && (r.resume || '').startsWith('Clôture')).length === 0 && <EmptyState icon={<Flag size={16} />} title="Aucune clôture" sub="Clôturez un mois pour archiver l'arrêté des comptes." />}
+              {db.rapports.filter(r => r.type === 'Clôture' || (!r.type || r.type === 'Financier') && (r.resume || '').startsWith('Clôture')).map(r => (
                 <RowItem key={r.id} icon={<Flag size={16} className="text-ink/50" />} title={`Clôture — ${r.periode}`} sub={`${r.auteur} · ${fmtDate(r.date)}`} right={<Badge tone={statusTone(r.statut)}>{r.statut}</Badge>} />
               ))}
             </div>

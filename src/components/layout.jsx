@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { cls, fmtDateTime } from '../lib/utils'
 import { useStore, useAuth, BUREAU_LABELS } from '../lib/store'
 import { useInstallPrompt } from '../lib/pwa'
 import { useTheme, useLang } from '../lib/prefs'
 import { t } from '../lib/i18n'
+import { api } from '../lib/api'
 import { Avatar, Badge } from './ui'
 import { Bell, Menu, LogOut, User, ChevronDown, Check, Repeat, Download, Globe, Sun, Moon } from './icons'
 
@@ -106,12 +107,23 @@ export function Shell({ nav, page, setPage, children }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [userOpen, setUserOpen] = useState(false)
   const [langOpen, setLangOpen] = useState(false)
+  const [unreadMsgs, setUnreadMsgs] = useState(0)
   const langRef = useRef(null)
   const { theme, toggleTheme } = useTheme()
   const { lang, setLang } = useLang()
   const installApp = useInstallPrompt()
   const current = nav.find(n => n.id === page)
   const go = (id) => { setPage(id); setMobileOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+
+  /* Badge de messages non lus sur l'entrée Messagerie (poll léger 30 s). */
+  useEffect(() => {
+    if (!user || user.isSuperAdmin === true) return undefined
+    let alive = true
+    const pull = () => { api.unreadCount().then(r => { if (alive) setUnreadMsgs(r.count || 0) }).catch(() => {}) }
+    pull()
+    const iv = setInterval(pull, 30000)
+    return () => { alive = false; clearInterval(iv) }
+  }, [user, page])
 
   /* Regroupe les pages par section — le volet affiche des titres de groupe. */
   const groups = []
@@ -146,6 +158,7 @@ export function Shell({ nav, page, setPage, children }) {
                 <span className={cls('grid h-8 w-8 shrink-0 place-items-center rounded-lg transition-transform duration-200 group-hover:scale-110',
                   active ? 'bg-gradient-to-br from-brand-500 to-brand-700 text-white shadow-md' : 'bg-black/[.05] text-ink/50 group-hover:text-brand-700')}>{n.icon}</span>
                 <span className="flex-1 truncate">{n.label}</span>
+                {n.id === 'messagerie' && unreadMsgs > 0 && <span className="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{unreadMsgs > 9 ? '9+' : unreadMsgs}</span>}
                 {active && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-gold-500" />}
               </button>
                 )
@@ -157,13 +170,23 @@ export function Shell({ nav, page, setPage, children }) {
 
       {/* Pied du volet : club + déconnexion */}
       <div className="border-t border-black/5 p-3">
-        <div className="mb-2 flex items-center gap-2.5 rounded-xl bg-brand-50/70 px-3 py-2.5">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 text-xs font-bold text-white">{(db.tontine?.nom || 'T')[0]}</span>
-          <div className="min-w-0 flex-1 leading-tight">
-            <p className="truncate text-xs font-bold text-brand-900">{db.tontine?.nom || 'TontiGest'}</p>
-            <p className="text-[10px] font-semibold text-brand-700/70">{db.tontine?.statut === 'Active' ? 'Tontine active' : 'En préparation'}</p>
+        {db.tontine?.nom ? (
+          <div className="mb-2 flex items-center gap-2.5 rounded-xl bg-brand-50/70 px-3 py-2.5">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 text-xs font-bold text-white">{(db.tontine.nom || 'T')[0]}</span>
+            <div className="min-w-0 flex-1 leading-tight">
+              <p className="truncate text-xs font-bold text-brand-900">{db.tontine.nom}</p>
+              <p className="text-[10px] font-semibold text-brand-700/70">{db.tontine.statut === 'Active' ? 'Tontine active' : db.tontine.statut === 'Pause' ? 'En pause' : db.tontine.statut === 'Clôturée' ? 'Clôturée' : 'En préparation'}</p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="mb-2 flex items-center gap-2.5 rounded-xl bg-brand-50/70 px-3 py-2.5">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-gold-400 to-gold-600 text-xs font-bold text-white">TG</span>
+            <div className="min-w-0 flex-1 leading-tight">
+              <p className="truncate text-xs font-bold text-brand-900">TontiGest</p>
+              <p className="text-[10px] font-semibold text-brand-700/70">{user?.isSuper ? 'Supervision globale' : 'Aucun club'}</p>
+            </div>
+          </div>
+        )}
         <button onClick={signOut} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-ink/55 transition hover:bg-red-50 hover:text-red-600 cursor-pointer">
           <span className="grid h-8 w-8 place-items-center rounded-lg bg-black/[.05]"><LogOut size={16} /></span> {t('app.logout')}
         </button>

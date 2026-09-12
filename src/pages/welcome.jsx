@@ -1,4 +1,5 @@
 import { useStore, useAuth, BUREAU_LABELS } from '../lib/store'
+import { uid, now } from '../lib/utils'
 import { Button, Card, Badge } from '../components/ui'
 import { MockPaiement, MockTresorerie, MockTour, OrbitRing, FloatBadge } from '../components/art'
 import {
@@ -250,7 +251,16 @@ export function Welcome({ onNavigate }) {
 
   const demarrer = () => {
     if (!bureauOk) return toast('Nommez au moins un Président et un Trésorier avant de démarrer', 'error')
-    setDb(d => ({ ...d, tontine: { ...d.tontine, statut: 'Active' } }))
+    setDb(d => ({
+      ...d,
+      tontine: { ...d.tontine, statut: 'Active' },
+      /* Parité avec TontinePage : notification réelle à tous les membres actifs. */
+      notifications: [...d.notifications, ...d.membres.filter(m => m.statut === 'Actif').map(m => ({
+        id: uid('nt'), pour: m.id, titre: 'Vie de la tontine',
+        message: `La tontine ${d.tontine?.nom || ''} est démarrée — le cycle des tours commence.`,
+        lu: false, date: now(),
+      }))],
+    }))
     toast('La tontine est démarrée — bon premier tour !')
   }
 
