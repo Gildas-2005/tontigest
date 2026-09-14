@@ -68,26 +68,48 @@ Copiez `.env.example` en `.env` puis ajustez :
 - `DB_CLIENT=pg` + `DATABASE_URL` → PostgreSQL (schéma appliqué au démarrage) ;
 - ou laissez `DB_CLIENT` vide + `DB_HOST`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` → MySQL local.
 
-## Installation
+## Installation (local)
+
+Prérequis : **PostgreSQL 14+** installé et démarré (service Windows `postgresql-x64-18`,
+port 5432). Créez une base vide `tontigest_pg` (une seule fois) :
+
+```sql
+CREATE DATABASE tontigest_pg;
+```
+
+puis copiez `.env.example` en `.env` et renseignez :
+
+```env
+DB_CLIENT=pg
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=votre-mot-de-passe
+DB_NAME=tontigest_pg
+```
 
 ```bash
 # 1. Installer les dépendances
 npm install
 
-# 2. Créer la base + le schéma + le compte superadministrateur
-npm run setup-db
-
-# 3. Compiler l'interface et démarrer le serveur
-npm start
+# 2. Démarrer (le schéma des 34 tables est appliqué automatiquement au
+#    premier lancement, le superadmin est créé depuis SUPERADMIN_*)
+npm start        # production locale : front compilé + API sur http://localhost:8787
+# ou, pour développer avec hot-reload :
+npm run dev      # Vite HMR sur http://localhost:5173 + API sur 8787
 ```
 
-L'application est ensuite accessible sur **http://localhost:8787**.
+L'application est ensuite accessible sur **http://localhost:8787** (`npm start`)
+ou **http://localhost:5173** (`npm run dev`).
+
+> **MySQL local toujours possible** : dans `.env`, retirez `DB_CLIENT=pg` et
+> renseignez `DB_HOST`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` (port 3306) — le
+> serveur bascule automatiquement sur le driver MySQL.
 
 ### Autres commandes
 
 | Commande | Rôle |
 |---|---|
-| `npm run setup-db` | Crée la base `tontigest`, applique le schéma (31 tables), insère le superadmin |
 | `npm start` | Compile le front (`vite build`) puis sert l'app sur le port 8787 |
 | `npm run dev` | Mode développement : Vite (HMR) + serveur API simultanés |
 | `npm run server` | Démarre uniquement le serveur Express (API + `dist/`) |
