@@ -1,4 +1,4 @@
-/* Client API TontiGest — REST local (Express + MySQL). Remplace l'ancien client Supabase. */
+/* Client API TontiGest — REST (Express + PostgreSQL/MySQL). */
 
 const TOKEN_KEY = 'tg_token'
 const BASE = '/api'
@@ -11,15 +11,27 @@ async function request(method, path, body) {
   const headers = { 'Content-Type': 'application/json' }
   const token = getToken()
   if (token) headers.Authorization = `Bearer ${token}`
-  let res
-  try {
-    res = await fetch(`${BASE}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    })
-  } catch {
-    throw new Error('Serveur local injoignable — vérifiez que TontiGest tourne (npm start).')
+
+  /* Le service en ligne (plan gratuit) s'endort après 15 min d'inactivité :
+     la première requête peut prendre ~30 s (réveil). On retente automatiquement
+     les échecs réseau (3 essais, backoff) au lieu d'échouer immédiatement. */
+  let res = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+      break
+    } catch {
+      if (attempt < 2) await new Promise(r => setTimeout(r, 4000 * (attempt + 1)))
+    }
+  }
+  if (!res) {
+    const err = new Error('Connexion au serveur impossible — vérifiez votre connexion internet puis réessayez.')
+    err.network = true
+    throw err
   }
   const text = await res.text()
   const data = text ? JSON.parse(text) : {}

@@ -62,14 +62,18 @@ const router = Router()
 router.post('/auth/signup', async (req, res) => {
   const { nom, telephone, email, password } = req.body || {}
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe obligatoires.' })
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(email))) return res.status(400).json({ error: 'Adresse email invalide.' })
   if (String(password).length < 6) return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 6 caractères.' })
+  if (String(nom || '').trim().length < 4) return res.status(400).json({ error: 'Le nom complet doit faire au moins 4 caractères.' })
+  if (!String(telephone || '').trim()) return res.status(400).json({ error: 'Le téléphone est obligatoire.' })
+  if (!/^[+0-9][0-9\s.-]{7,}$/.test(String(telephone).trim())) return res.status(400).json({ error: 'Numéro de téléphone invalide (ex : +237 6 55 00 11 22).' })
   const [exists] = await q('SELECT id FROM users WHERE email = ?', [String(email).toLowerCase()])
   if (exists.length) return res.status(400).json({ error: 'Un compte existe déjà avec cet email.' })
   const id = randomUUID()
   await q(
     `INSERT INTO users (id, email, password_hash, nom, telephone, role, onboarding_done)
      VALUES (?,?,?,?,?, 'Membre', 0)`,
-    [id, String(email).toLowerCase(), await hashPassword(password), nom || '', telephone || '']
+    [id, String(email).toLowerCase(), await hashPassword(password), String(nom).trim(), String(telephone).trim()]
   )
   const [rows] = await q('SELECT * FROM users WHERE id = ?', [id])
   const user = rows[0]

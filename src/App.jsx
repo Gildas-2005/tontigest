@@ -155,10 +155,10 @@ function AppInner() {
     const t = setTimeout(() => setSplash(false), 1600)
     return () => clearTimeout(t)
   }, [])
-  // Si les données du club tardent (API arrêtée, MySQL injoignable), on prévient.
+  // Si les données du club tardent (service gratuit en réveil ~30 s), on prévient.
   useEffect(() => {
     if (!user || user.isSuperAdmin || !user.clubId || db.tontine) return
-    const t = setTimeout(() => setLoadWait(true), 6000)
+    const t = setTimeout(() => setLoadWait(true), 40000)
     return () => clearTimeout(t)
   }, [user, db.tontine])
 
@@ -174,8 +174,9 @@ function AppInner() {
         <div className="max-w-md rounded-2xl border border-black/5 bg-white p-8 text-center shadow-xl">
           <p className="font-display text-xl font-semibold text-ink">Impossible de charger les données du club</p>
           <p className="mt-2 text-sm text-ink/60">
-            Vérifiez que le serveur TontiGest et MySQL sont bien démarrés, puis actualisez la page.
-            Si le problème persiste, reconnectez-vous.
+            Le serveur met un instant à répondre (réveil du service gratuit) ou rencontre
+            un problème temporaire. Actualisez la page — si le problème persiste,
+            reconnectez-vous.
           </p>
           <div className="mt-5 flex justify-center gap-2">
             <Button variant="outline" onClick={() => window.location.reload()}>Actualiser</Button>
